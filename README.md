@@ -72,9 +72,31 @@ Better Auth will be mounted using the recommended Next.js catch-all route at `/a
 
 The catch-all handler may expose additional Better Auth framework endpoints, but they are not part of the application's public feature set unless explicitly enabled and documented.
 
-## Running the Application Locally
+## Running the Application with Docker
 
-The application will be runnable locally using Docker Compose. Detailed setup instructions, environment-variable requirements, TLS configuration, and startup commands will be added as the application is developed.
+Docker Compose starts the Next.js production server and PostgreSQL. The database data is kept in a named Docker volume, so it remains after the containers stop or are recreated.
+
+1. Install Docker Engine/Desktop with the Compose plugin.
+2. Copy `.env.example` to `.env` and set a long random `BETTER_AUTH_SECRET` and a strong `POSTGRES_PASSWORD`. Keep `.env` private; it is ignored by Git.
+3. Build and start both services:
+
+   ```sh
+   docker compose up --build
+   ```
+
+4. Open [http://localhost:3000](http://localhost:3000). PostgreSQL is available on port `5432` from your machine. From the app container, use hostname `db` and port `5432`; Compose sets `DATABASE_URL` for this address.
+
+Useful commands:
+
+```sh
+docker compose logs -f app       # follow application logs
+docker compose down              # stop and remove containers; keep database data
+docker compose down -v           # also delete database data permanently
+```
+
+The app image uses Next.js standalone output and a multi-stage build, so the running image contains the production server and runtime files rather than the full source tree and development dependencies. Compose waits for PostgreSQL's health check before starting the app.
+
+At this stage, PostgreSQL is provisioned but the application has no Prisma/database client or schema wired up yet. `DATABASE_URL` is passed to the app in preparation for that integration; Better Auth and the file routes do not currently read from this database. No database migrations run on startup.
 
 ## Security & Threat Model
 
