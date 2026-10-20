@@ -11,7 +11,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     <html
       lang="en" className={cn("font-sans", geist.variable)}
     >
-      <body>{children}</body>
+      <body>
+          {children}
+      </body>
       <Toaster />
     </html>
   );
