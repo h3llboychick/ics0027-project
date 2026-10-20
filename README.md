@@ -74,17 +74,35 @@ The catch-all handler may expose additional Better Auth framework endpoints, but
 
 ## Running the Application with Docker
 
-Docker Compose starts the Next.js production server and PostgreSQL. The database data is kept in a named Docker volume, so it remains after the containers stop or are recreated.
+Docker Compose starts the Next.js app, PostgreSQL, and an nginx TLS reverse proxy. The database and encrypted file data are kept in named volumes.
 
-1. Install Docker Engine/Desktop with the Compose plugin.
-2. Copy `.env.example` to `.env` and set a long random `BETTER_AUTH_SECRET` and a strong `POSTGRES_PASSWORD`. Keep `.env` private; it is ignored by Git.
-3. Build and start both services:
+1. Install Docker with the Compose plugin, Node.js 24 with Corepack/pnpm, and OpenSSL.
+2. Install the project dependencies and generate local secrets and TLS certificates:
 
    ```sh
-   docker compose up --build
+   corepack pnpm install --frozen-lockfile
+   ./scripts/setup-dev.sh
+   corepack pnpm exec prisma generate
    ```
 
-4. Open [http://localhost:3000](http://localhost:3000). PostgreSQL is available on port `5432` from your machine. From the app container, use hostname `db` and port `5432`; Compose sets `DATABASE_URL` for this address.
+   The script creates `.env` if needed and fills missing secrets with random values. Existing secrets and a valid local CA are preserved; the old `http://localhost:3000` auth URL default is changed to the HTTPS development URL. It creates a server certificate for `secure-file-manager.dev`; private keys and `.env` stay out of Git. Set `RESEND_API_KEY` in `.env` to enable email verification and password-reset messages.
+
+3. Point the development hostname at your machine by adding this entry to your hosts file if it is not already present:
+
+   ```text
+   127.0.0.1 secure-file-manager.dev
+   ```
+
+   Trust `certs/ca/root-ca.crt` in your OS or browser certificate store so the browser accepts the local TLS certificate.
+
+4. Build and start the services, then apply the database migrations from the repository:
+
+   ```sh
+   docker compose up --build -d
+   corepack pnpm exec prisma migrate deploy
+   ```
+
+5. Open [https://secure-file-manager.dev:8443](https://secure-file-manager.dev:8443). PostgreSQL is available on port `5432` from your machine. From the app container, use hostname `db` and port `5432`.
 
 Useful commands:
 
@@ -94,9 +112,7 @@ docker compose down              # stop and remove containers; keep database dat
 docker compose down -v           # also delete database data permanently
 ```
 
-The app image uses Next.js standalone output and a multi-stage build, so the running image contains the production server and runtime files rather than the full source tree and development dependencies. Compose waits for PostgreSQL's health check before starting the app.
-
-At this stage, PostgreSQL is provisioned but the application has no Prisma/database client or schema wired up yet. `DATABASE_URL` is passed to the app in preparation for that integration; Better Auth and the file routes do not currently read from this database. No database migrations run on startup.
+The app image uses Next.js standalone output and a multi-stage build. Compose waits for PostgreSQL's health check before starting the app. Migrations are applied explicitly with `prisma migrate deploy`; they do not run automatically on container startup.
 
 ## Security & Threat Model
 
