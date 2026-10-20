@@ -44,3 +44,6 @@ dist/
 .env
 
 /src/generated/prisma
+
+/storage/
+certs/

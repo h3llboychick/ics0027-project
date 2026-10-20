@@ -7,3 +7,5 @@ npm-debug.log*
 pnpm-debug.log*
 README.md
 docs
+certs
+storage
