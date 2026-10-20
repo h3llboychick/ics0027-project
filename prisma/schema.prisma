@@ -22,6 +22,7 @@ model User {
   updatedAt     DateTime  @updatedAt
   sessions      Session[]
   accounts      Account[]
+  files FileMetadata[]
 
   @@unique([email])
   @@map("user")
@@ -73,4 +74,22 @@ model Verification {
 
   @@index([identifier])
   @@map("verification")
+}
+
+model FileMetadata {
+  id            String   @id
+  ownedBy       String
+  filename      String
+  fileSizeBytes Int  // max size supported by Int datatype ~ 2GB
+  encryptedFileAuthTag Bytes
+  encryptedFileIV Bytes
+  protectedEncryptionKey Bytes
+  protectedEncryptionKeyIV Bytes
+  protectedEncryptionKeyAuthTag Bytes
+  createdAt     DateTime @default(now())
+
+  owner User @relation(fields: [ownedBy], references: [id], onDelete: Cascade)
+  
+  @@index([ownedBy])
+  @@map("file_metadata")
 }
