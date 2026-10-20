@@ -21,7 +21,7 @@ COPY . .
 ENV DATABASE_URL="postgresql://build:build@127.0.0.1:5432/build"
 ENV BETTER_AUTH_SECRET="build-only-secret-not-used-at-runtime-1234567890"
 ENV BETTER_AUTH_URL="http://localhost:3000"
-RUN pnpm build
+RUN mkdir -p public && pnpm build
 
 FROM node:24-bookworm-slim AS runner
 WORKDIR /app
