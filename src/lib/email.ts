@@ -31,7 +31,6 @@ export async function sendVerificationEmail(
   });
 
   if (error) console.error(error);
-  console.log(data);
 }
 
 export async function sendResetPassword(
