@@ -46,6 +46,7 @@ Docker Compose simplifies deployment by defining and orchestrating all services 
 | `/sign-in` | Public | Email-and-password sign in page. |
 | `/sign-up` | Public | Account-registration page. |
 | `/forgot-password` | Public | Forgot password page
+| `/email-verification-result` | Public | Email verification success or recovery page. |
 
 ### Application API
 

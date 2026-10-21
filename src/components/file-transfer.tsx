@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/card";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { toast } from "@/components/ui/toast";
 import { authClient } from "@/lib/auth-client";
 
 type UploadedFile = {
@@ -187,7 +188,11 @@ export function FileTransfer() {
     if (url.searchParams.get("email_verified") !== "1") return;
 
     if (session?.user?.emailVerified) {
-      setMessage("Your email has been confirmed successfully.");
+      toast.add({
+        type: "success",
+        title: "Email confirmed",
+        description: "Your email has been verified successfully.",
+      });
     }
 
     url.searchParams.delete("email_verified");

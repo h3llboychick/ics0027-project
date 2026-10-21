@@ -45,7 +45,7 @@ export function SignupForm({ ...props }: React.ComponentProps<typeof Card>) {
         name,
         email,
         password,
-        callbackURL: "/?email_verified=1"
+        callbackURL: "/email-verification-result?from=email"
       })
 
       if (error) {
