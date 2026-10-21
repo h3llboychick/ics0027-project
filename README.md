@@ -25,7 +25,7 @@ The native Node.js [crypto](https://nodejs.org/api/crypto.html) module handles f
 6. Deployment: **Docker Compose**
 Docker Compose simplifies deployment by defining and orchestrating all services (application, database, nginx, volumes) in a single configuration file. This ensures consistency across different environments (development, testing, production).
 
-## Planned Features
+## Features
 
 - Registration and login using email and password
 - Opaque, cookie-based sessions managed by Better Auth
@@ -33,19 +33,19 @@ Docker Compose simplifies deployment by defining and orchestrating all services 
 - Listing and searching only the authenticated user's files
 - Downloading and decrypting files after a server-side ownership check
 - Deleting files owned by the authenticated user
-- Per-user storage quotas and upload-size limits
-- Structured security logging without passwords, session tokens, encryption keys, or file contents
+- Per-user storage quotas and upload-size limits [partially implemented]
+- Structured security logging without passwords, session tokens, encryption keys, or file contents [not implemented yet]
 
-## Planned Routes
+## Routes
 
 ### User-facing routes
 
 | Route | Access | Purpose |
 | --- | --- | --- |
-| `/` | Public | Landing page; redirects authenticated users to `/files`. |
-| `/login` | Public | Email-and-password login page. |
-| `/register` | Public | Account-registration page. |
-| `/files` | Authenticated | File-management page for listing, searching, uploading, downloading, and deleting the current user's files. |
+| `/` | authenticated | File-management page for listing, searching, uploading, downloading, and deleting the current user's files. |
+| `/sign-in` | Public | Email-and-password sign in page. |
+| `/sign-up` | Public | Account-registration page. |
+| `/forgot-password` | Public | Forgot password page
 
 ### Application API
 
@@ -74,35 +74,23 @@ The catch-all handler may expose additional Better Auth framework endpoints, but
 
 ## Running the Application with Docker
 
-Docker Compose starts the Next.js app, PostgreSQL, and an nginx TLS reverse proxy. The database and encrypted file data are kept in named volumes.
+Docker Compose runs the Next.js app, PostgreSQL, and an nginx TLS reverse proxy. The database and encrypted files are kept in named volumes. You need Docker with the Compose plugin, Node.js 24 with Corepack, and OpenSSL.
 
-1. Install Docker with the Compose plugin, Node.js 24 with Corepack/pnpm, and OpenSSL.
-2. Install the project dependencies and generate local secrets and TLS certificates:
+Run the full setup from the repository root:
 
-   ```sh
-   corepack pnpm install --frozen-lockfile
-   ./scripts/setup-dev.sh
-   corepack pnpm exec prisma generate
-   ```
+```sh
+./scripts/setup-dev.sh
+```
 
-   The script creates `.env` if needed and fills missing secrets with random values. Existing secrets and a valid local CA are preserved; the old `http://localhost:3000` auth URL default is changed to the HTTPS development URL. It creates a server certificate for `secure-file-manager.dev`; private keys and `.env` stay out of Git. Set `RESEND_API_KEY` in `.env` to enable email verification and password-reset messages.
+The script asks for the PostgreSQL database/user, Better Auth secret, PostgreSQL password, file-encryption KEK, and Resend API key. On a fresh setup, leave the Better Auth secret, PostgreSQL password, and KEK blank to generate random values. Existing values are kept when you press Enter. Resend cannot be generated; leave it blank to skip email setup. Email verification and password-reset flows need a valid Resend key.
 
-3. Point the development hostname at your machine by adding this entry to your hosts file if it is not already present:
+The script installs dependencies with Corepack/pnpm, generates the Prisma client and TLS certificates, builds and starts the services, then applies database migrations. It keeps `.env` and private keys out of Git. It does not change your hosts file or OS/browser trust store, so add this entry if needed and trust the local CA certificate:
 
-   ```text
-   127.0.0.1 secure-file-manager.dev
-   ```
+```text
+127.0.0.1 secure-file-manager.dev
+```
 
-   Trust `certs/ca/root-ca.crt` in your OS or browser certificate store so the browser accepts the local TLS certificate.
-
-4. Build and start the services, then apply the database migrations from the repository:
-
-   ```sh
-   docker compose up --build -d
-   corepack pnpm exec prisma migrate deploy
-   ```
-
-5. Open [https://secure-file-manager.dev:8443](https://secure-file-manager.dev:8443). PostgreSQL is available on port `5432` from your machine. From the app container, use hostname `db` and port `5432`.
+Trust `certs/ca/root-ca.crt`, then open [https://secure-file-manager.dev:8443](https://secure-file-manager.dev:8443). PostgreSQL is available on port `5432` from your machine and on `db:5432` from the app container.
 
 Useful commands:
 
@@ -112,7 +100,7 @@ docker compose down              # stop and remove containers; keep database dat
 docker compose down -v           # also delete database data permanently
 ```
 
-The app image uses Next.js standalone output and a multi-stage build. Compose waits for PostgreSQL's health check before starting the app. Migrations are applied explicitly with `prisma migrate deploy`; they do not run automatically on container startup.
+The app image uses Next.js standalone output and a multi-stage build. Compose waits for PostgreSQL's health check before starting the app. Migrations run from `setup-dev.sh`; they do not run automatically when starting Compose directly.
 
 ## Security & Threat Model
 

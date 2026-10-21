@@ -30,7 +30,15 @@ cleanup() {
 }
 trap cleanup EXIT
 
-command -v openssl >/dev/null 2>&1 || die "OpenSSL is required to create the development certificates."
+for command_name in openssl node corepack docker; do
+  command -v "$command_name" >/dev/null 2>&1 || die "$command_name is required. Install the prerequisites listed in README.md."
+done
+
+node_major="$(node -p 'Number(process.versions.node.split(".")[0])')"
+(( node_major >= 24 )) || die "Node.js 24 or newer is required."
+docker compose version >/dev/null 2>&1 || die "Docker Compose is required."
+docker info >/dev/null 2>&1 || die "Docker is not running. Start Docker and rerun this script."
+[[ -t 0 ]] || die "Run this script from an interactive terminal so it can prompt for credentials."
 
 mkdir -p -- "$ROOT_DIR" "$CA_DIR"
 touch "$ENV_FILE"
@@ -64,43 +72,124 @@ write_env() {
   local temp_file
   temp_file="$(mktemp "$ROOT_DIR/.env.XXXXXX")"
 
-  awk -v key="$key" -v value="$value" '
+  SETUP_ENV_VALUE="$value" awk -v key="$key" '
     BEGIN { prefix = key "=" }
     index($0, prefix) == 1 {
-      if (!found) print prefix value
+      if (!found) print prefix ENVIRON["SETUP_ENV_VALUE"]
       found = 1
       next
     }
     { print }
-    END { if (!found) print prefix value }
+    END { if (!found) print prefix ENVIRON["SETUP_ENV_VALUE"] }
   ' "$ENV_FILE" > "$temp_file"
 
   chmod 600 "$temp_file"
   mv -- "$temp_file" "$ENV_FILE"
 }
 
-ensure_value() {
+prompt_database_value() {
   local key="$1"
-  local default_value="$2"
-  if [[ -z "$(read_env "$key")" ]]; then
-    write_env "$key" "$default_value"
+  local label="$2"
+  local default_value="$3"
+  local existing value
+  existing="$(read_env "$key")"
+
+  if [[ -n "$existing" ]]; then
+    read -r -p "$label [$existing] (Enter keeps it): " value
+    [[ -n "$value" ]] || value="$existing"
+  else
+    read -r -p "$label [$default_value]: " value
+    [[ -n "$value" ]] || value="$default_value"
+  fi
+
+  [[ "$value" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || die "$label may contain only letters, digits, and underscores."
+  if [[ -n "$existing" && "$value" != "$existing" ]]; then
+    printf 'Changing this value may require reinitializing the existing PostgreSQL volume.\n'
+  fi
+  write_env "$key" "$value"
+}
+
+prompt_secret() {
+  local key="$1"
+  local label="$2"
+  local byte_count="$3"
+  local kind="$4"
+  local existing value keeping_existing=false
+  existing="$(read_env "$key")"
+
+  if [[ -n "$existing" ]]; then
+    read -r -s -p "$label already exists. Enter a replacement or press Enter to keep it: " value
+  else
+    read -r -s -p "$label (press Enter to generate a random value): " value
+  fi
+  printf '\n'
+
+  if [[ -z "$value" ]]; then
+    if [[ -n "$existing" ]]; then
+      value="$existing"
+      keeping_existing=true
+    else
+      value="$(openssl rand -hex "$byte_count")"
+      printf 'Generated %s.\n' "$key"
+    fi
+  fi
+
+  case "$kind" in
+    auth)
+      [[ ${#value} -ge 32 && "$value" =~ ^[-A-Za-z0-9._~]+$ ]] \
+        || die "$label must be at least 32 characters and use only letters, digits, dot, underscore, tilde, or hyphen."
+      ;;
+    postgres)
+      [[ "$value" =~ ^[-A-Za-z0-9._~]+$ ]] \
+        || die "$label must be URL-safe (letters, digits, dot, underscore, tilde, or hyphen)."
+      if [[ "$keeping_existing" == false && ${#value} -lt 32 ]]; then
+        die "$label must be at least 32 characters."
+      elif [[ "$keeping_existing" == true && ${#value} -lt 32 ]]; then
+        printf 'Keeping the existing PostgreSQL password; it is shorter than the recommended 32 characters.\n'
+      fi
+      ;;
+    kek)
+      [[ "$value" =~ ^[[:xdigit:]]{64}$ ]] \
+        || die "$label must be exactly 64 hexadecimal characters (32 bytes)."
+      ;;
+  esac
+
+  if [[ -n "$existing" && "$value" != "$existing" ]]; then
+    case "$key" in
+      POSTGRES_PASSWORD) printf 'Changing this password may require a fresh PostgreSQL volume.\n' ;;
+      FILE_ENCRYPTION_KEK) printf 'Changing this key makes files encrypted with the previous key unreadable.\n' ;;
+      BETTER_AUTH_SECRET) printf 'Changing this secret invalidates existing authentication sessions.\n' ;;
+    esac
+  fi
+
+  write_env "$key" "$value"
+}
+
+prompt_resend_key() {
+  local existing value
+  existing="$(read_env RESEND_API_KEY)"
+
+  if [[ -n "$existing" ]]; then
+    read -r -s -p "Resend API key already exists. Enter a replacement or press Enter to keep it: " value
+  else
+    read -r -s -p "Resend API key (press Enter to skip email setup): " value
+  fi
+  printf '\n'
+
+  if [[ -n "$value" ]]; then
+    [[ "$value" =~ ^[A-Za-z0-9._~/-]+$ ]] || die "The Resend API key contains unsupported characters."
+    write_env RESEND_API_KEY "$value"
+  elif [[ -z "$existing" ]]; then
+    write_env RESEND_API_KEY ""
   fi
 }
 
-ensure_hex_secret() {
-  local key="$1"
-  local byte_count="$2"
-  if [[ -z "$(read_env "$key")" ]]; then
-    write_env "$key" "$(openssl rand -hex "$byte_count")"
-  fi
-}
-
-ensure_value POSTGRES_DB storage
-ensure_value POSTGRES_USER storage
-ensure_hex_secret POSTGRES_PASSWORD 24
-ensure_hex_secret BETTER_AUTH_SECRET 32
-ensure_hex_secret FILE_ENCRYPTION_KEK 32
-ensure_value RESEND_API_KEY ""
+prompt_database_value POSTGRES_DB "PostgreSQL database name" storage
+prompt_database_value POSTGRES_USER "PostgreSQL username" storage
+prompt_secret POSTGRES_PASSWORD "PostgreSQL password" 24 postgres
+prompt_secret BETTER_AUTH_SECRET "Better Auth secret" 32 auth
+prompt_secret FILE_ENCRYPTION_KEK "File encryption KEK" 32 kek
+prompt_resend_key
 
 auth_url="$(read_env BETTER_AUTH_URL)"
 if [[ -z "$auth_url" || "$auth_url" == "http://localhost:3000" ]]; then
@@ -118,13 +207,10 @@ encryption_kek="$(read_env FILE_ENCRYPTION_KEK)"
 db_name="$(read_env POSTGRES_DB)"
 db_user="$(read_env POSTGRES_USER)"
 db_password="$(read_env POSTGRES_PASSWORD)"
-database_url="$(read_env DATABASE_URL)"
 safe_url_component='^[-A-Za-z0-9._~]+$'
-if [[ -z "$database_url" ]]; then
-  [[ "$db_name" =~ $safe_url_component && "$db_user" =~ $safe_url_component && "$db_password" =~ $safe_url_component ]] \
-    || die "Set DATABASE_URL explicitly: the current PostgreSQL values need URL encoding."
-  write_env DATABASE_URL "postgresql://$db_user:$db_password@localhost:5432/$db_name"
-fi
+[[ "$db_name" =~ $safe_url_component && "$db_user" =~ $safe_url_component && "$db_password" =~ $safe_url_component ]] \
+  || die "PostgreSQL values must be URL-safe to build DATABASE_URL."
+write_env DATABASE_URL "postgresql://$db_user:$db_password@localhost:5432/$db_name"
 
 if [[ -f "$CA_KEY" && -f "$CA_CERT" ]]; then
   openssl x509 -in "$CA_CERT" -noout -checkend 0 >/dev/null 2>&1 \
@@ -216,12 +302,36 @@ fi
 chmod 600 "$ENV_FILE" "$CA_KEY" "$SERVER_KEY"
 chmod 644 "$CA_CERT" "$SERVER_CERT"
 
+printf '\nInstalling project dependencies with Corepack and pnpm...\n'
+(cd "$ROOT_DIR" && corepack pnpm install --frozen-lockfile)
+
+printf '\nGenerating the Prisma client...\n'
+(cd "$ROOT_DIR" && corepack pnpm exec prisma generate)
+
+printf '\nBuilding and starting the application stack...\n'
+(cd "$ROOT_DIR" && docker compose up --build -d)
+
+printf 'Waiting for PostgreSQL to become ready...\n'
+db_ready=false
+for attempt in {1..60}; do
+  if (cd "$ROOT_DIR" && docker compose exec -T db pg_isready -q -U "$db_user" -d "$db_name") >/dev/null 2>&1; then
+    db_ready=true
+    break
+  fi
+  sleep 1
+done
+[[ "$db_ready" == true ]] || die "PostgreSQL did not become ready. Check docker compose logs db."
+
+printf '\nApplying database migrations...\n'
+(cd "$ROOT_DIR" && corepack pnpm exec prisma migrate deploy)
+
 if [[ -z "$(read_env RESEND_API_KEY)" ]]; then
-  printf '\nRESEND_API_KEY is empty. Add a valid Resend API key to .env to enable sign-up and password-reset emails.\n'
+  printf '\nRESEND_API_KEY is empty, so email verification and password-reset emails are unavailable.\n'
 fi
 
-printf '\nLocal development secrets and TLS files are ready. Secret values were not printed.\n'
-printf '1. Add this hosts entry if it is not already present: 127.0.0.1 %s\n' "$DEV_HOST"
-printf '2. Trust %s in your OS/browser certificate store.\n' "$CA_CERT"
-printf '3. Start the app with: docker compose up --build -d\n'
-printf '4. Open: %s\n' "$DEV_URL"
+printf '\nSetup is complete. Secret values were not printed.\n'
+printf 'Add this hosts entry if it is not already present: 127.0.0.1 %s\n' "$DEV_HOST"
+printf 'Trust %s in your OS or browser certificate store.\n' "$CA_CERT"
+printf 'Open: %s\n' "$DEV_URL"
+printf 'View app logs: docker compose logs -f app\n'
+printf 'Stop services and keep data: docker compose down\n'
