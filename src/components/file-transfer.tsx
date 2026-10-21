@@ -180,6 +180,24 @@ export function FileTransfer() {
     void loadFiles(1);
   }, [loadFiles]);
 
+  useEffect(() => {
+    if (isSessionPending) return;
+
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("email_verified") !== "1") return;
+
+    if (session?.user?.emailVerified) {
+      setMessage("Your email has been confirmed successfully.");
+    }
+
+    url.searchParams.delete("email_verified");
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${url.pathname}${url.search}${url.hash}`,
+    );
+  }, [isSessionPending, session]);
+
   return (
     <>
       <Card className="gap-0 py-0">
