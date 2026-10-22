@@ -64,7 +64,7 @@ export function EmailVerificationResult() {
     if (session?.user?.emailVerified) {
       setKind("confirmed");
       const redirectTimer = window.setTimeout(() => {
-        router.replace("/?email_verified=1");
+        router.replace("/");
       }, 3000);
 
       return () => window.clearTimeout(redirectTimer);

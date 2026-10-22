@@ -18,8 +18,6 @@ import {
 } from "@/components/ui/card";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { toast } from "@/components/ui/toast";
-import { authClient } from "@/lib/auth-client";
 
 type UploadedFile = {
   id: string;
@@ -36,7 +34,6 @@ function formatBytes(bytes: number) {
 
 export function FileTransfer() {
   const router = useRouter();
-  const { data: session, isPending: isSessionPending } = authClient.useSession();
   const inputRef = useRef<HTMLInputElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
@@ -180,28 +177,6 @@ export function FileTransfer() {
   useEffect(() => {
     void loadFiles(1);
   }, [loadFiles]);
-
-  useEffect(() => {
-    if (isSessionPending) return;
-
-    const url = new URL(window.location.href);
-    if (url.searchParams.get("email_verified") !== "1") return;
-
-    if (session?.user?.emailVerified) {
-      toast.add({
-        type: "success",
-        title: "Email confirmed",
-        description: "Your email has been verified successfully.",
-      });
-    }
-
-    url.searchParams.delete("email_verified");
-    window.history.replaceState(
-      window.history.state,
-      "",
-      `${url.pathname}${url.search}${url.hash}`,
-    );
-  }, [isSessionPending, session]);
 
   return (
     <>
