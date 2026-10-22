@@ -2,7 +2,7 @@ import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { prisma } from "./prisma";
 import { hash, verify } from "@/lib/password_hashing";
-import { sendVerificationEmail, sendResetPassword } from "./email";
+import { EMAIL_LINK_EXPIRES_IN_SECONDS, sendVerificationEmail, sendResetPassword } from "./email";
 
 export const auth = betterAuth({
   appName: "SecureFileManager",
@@ -17,7 +17,7 @@ export const auth = betterAuth({
     maxPasswordLength: 32,
     revokeSessionsOnPasswordReset: true,
     sendResetPassword,
-    resetPasswordTokenExpiresIn: 3600,
+    resetPasswordTokenExpiresIn: EMAIL_LINK_EXPIRES_IN_SECONDS,
     password: {
       hash,
       verify,
@@ -27,6 +27,6 @@ export const auth = betterAuth({
     sendVerificationEmail,
     sendOnSignUp: true,
     autoSignInAfterVerification: true,
-    expiresIn: 3600,
+    expiresIn: EMAIL_LINK_EXPIRES_IN_SECONDS,
   },
 });

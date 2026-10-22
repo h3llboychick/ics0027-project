@@ -172,7 +172,7 @@ prompt_resend_key() {
   if [[ -n "$existing" ]]; then
     read -r -s -p "Resend API key already exists. Enter a replacement or press Enter to keep it: " value
   else
-    read -r -s -p "Resend API key (press Enter to skip email setup): " value
+    read -r -s -p "Resend API key: " value
   fi
   printf '\n'
 
@@ -180,7 +180,24 @@ prompt_resend_key() {
     [[ "$value" =~ ^[A-Za-z0-9._~/-]+$ ]] || die "The Resend API key contains unsupported characters."
     write_env RESEND_API_KEY "$value"
   elif [[ -z "$existing" ]]; then
-    write_env RESEND_API_KEY ""
+    die "RESEND_API_KEY is required when EMAIL_PROVIDER=resend."
+  fi
+}
+
+prompt_email_provider() {
+  local existing value
+  existing="$(read_env EMAIL_PROVIDER)"
+  existing="${existing:-console}"
+  read -r -p "Email provider (console/resend) [$existing]: " value
+  value="${value:-$existing}"
+
+  case "$value" in
+    console|resend) write_env EMAIL_PROVIDER "$value" ;;
+    *) die "Email provider must be console or resend." ;;
+  esac
+
+  if [[ "$value" == resend ]]; then
+    prompt_resend_key
   fi
 }
 
@@ -189,7 +206,7 @@ prompt_database_value POSTGRES_USER "PostgreSQL username" storage
 prompt_secret POSTGRES_PASSWORD "PostgreSQL password" 24 postgres
 prompt_secret BETTER_AUTH_SECRET "Better Auth secret" 32 auth
 prompt_secret FILE_ENCRYPTION_KEK "File encryption KEK" 32 kek
-prompt_resend_key
+prompt_email_provider
 
 auth_url="$(read_env BETTER_AUTH_URL)"
 if [[ -z "$auth_url" || "$auth_url" == "http://localhost:3000" ]]; then
@@ -325,8 +342,8 @@ done
 printf '\nApplying database migrations...\n'
 (cd "$ROOT_DIR" && corepack pnpm exec prisma migrate deploy)
 
-if [[ -z "$(read_env RESEND_API_KEY)" ]]; then
-  printf '\nRESEND_API_KEY is empty, so email verification and password-reset emails are unavailable.\n'
+if [[ "$(read_env EMAIL_PROVIDER)" == console ]]; then
+  printf '\nEmail verification and password-reset messages are printed to application logs.\n'
 fi
 
 printf '\nSetup is complete. Secret values were not printed.\n'
