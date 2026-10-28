@@ -28,13 +28,22 @@ Docker Compose simplifies deployment by defining and orchestrating all services 
 ## Features
 
 - Registration and login using email and password
-- Opaque, cookie-based sessions managed by Better Auth
+- Required email verification and password reset through Better Auth
+- Styled HTML and plain-text emails, with the application's lock logo in HTML messages
+- Email delivery through Resend or application logs, selected with environment variables
+- Opaque, cookie-based sessions managed by Better Auth, with a fixed 24-hour lifetime and Secure, HttpOnly, SameSite=Strict cookies
 - Uploading files over TLS and encrypting them before they are written to storage
-- Listing and searching only the authenticated user's files
+- Listing and paginating only the authenticated user's files
 - Downloading and decrypting files after a server-side ownership check
 - Deleting files owned by the authenticated user
-- Per-user storage quotas and upload-size limits [partially implemented]
-- Structured security logging without passwords, session tokens, encryption keys, or file contents [not implemented yet]
+- Backend validation of filenames and a 25 MiB per-file upload limit; nginx applies a separate request-body limit
+
+Planned features:
+
+- Filename search
+- Per-user storage quotas
+- A public `/api/health` endpoint
+- Structured security logging without passwords, session tokens, encryption keys, or file contents
 
 ## Routes
 
@@ -42,27 +51,27 @@ Docker Compose simplifies deployment by defining and orchestrating all services 
 
 | Route | Access | Purpose |
 | --- | --- | --- |
-| `/` | authenticated | File-management page for listing, searching, uploading, downloading, and deleting the current user's files. |
+| `/` | Authenticated | File-management page for listing, paginating, uploading, downloading, and deleting the current user's files. |
 | `/sign-in` | Public | Email-and-password sign in page. |
 | `/sign-up` | Public | Account-registration page. |
-| `/forgot-password` | Public | Forgot password page
+| `/forgot-password` | Public | Requests a password-reset link. |
+| `/reset-password` | Public | Sets a new password using the emailed reset link. |
 | `/email-verification-result` | Public | Email verification success or recovery page. |
 
 ### Application API
 
 | Method | Route | Access | Purpose |
 | --- | --- | --- | --- |
-| `GET` | `/api/health` | Public | Reports whether the application is running. It must not disclose configuration, dependency, or secret information. |
-| `GET` | `/api/files` | Authenticated | Lists the current user's file metadata. An optional `search` query parameter filters by filename. |
+| `GET` | `/api/files` | Authenticated | Lists the current user's file metadata. Supports `page` (default `1`) and `pageSize` (`10`, `20`, or `40`; default `10`). |
 | `POST` | `/api/files` | Authenticated | Uploads a file using `multipart/form-data`. The backend validates the request, encrypts the file, and stores its metadata. |
 | `GET` | `/api/files/{id}` | Authenticated owner | Checks ownership, decrypts the requested file, and returns it as a download. |
 | `DELETE` | `/api/files/{id}` | Authenticated owner | Checks ownership and deletes the file and its associated metadata. |
 
-Every file endpoint validates the session on the server. Routes containing `{id}` use an opaque, server-generated file identifier and verify that the file's `ownerId` matches the authenticated user's ID.
+Every file endpoint validates the session on the server. Routes containing `{id}` use an opaque, server-generated file identifier and verify that the file's `ownedBy` field matches the authenticated user's ID.
 
 ### Authentication API
 
-Better Auth will be mounted using the recommended Next.js catch-all route at `/api/auth/[...all]`. The main operations used by this application are:
+Better Auth is mounted through the Next.js catch-all route at `/api/auth/[...all]`. The main operations used by this application are:
 
 | Method | Effective route | Purpose |
 | --- | --- | --- |
@@ -70,6 +79,11 @@ Better Auth will be mounted using the recommended Next.js catch-all route at `/a
 | `POST` | `/api/auth/sign-in/email` | Authenticates a user and creates a server-side session. |
 | `POST` | `/api/auth/sign-out` | Revokes the current session and clears its cookie. |
 | `GET` | `/api/auth/get-session` | Returns the current authenticated session, if one exists. |
+| `POST` | `/api/auth/send-verification-email` | Requests a fresh verification link. |
+| `GET` | `/api/auth/verify-email` | Verifies the emailed token and redirects to the verification-result page. |
+| `POST` | `/api/auth/request-password-reset` | Requests a password-reset email. |
+| `GET` | `/api/auth/reset-password/{token}` | Opens the password-reset form from an emailed link. |
+| `POST` | `/api/auth/reset-password` | Sets a new password using a valid reset token. |
 
 The catch-all handler may expose additional Better Auth framework endpoints, but they are not part of the application's public feature set unless explicitly enabled and documented.
 
@@ -83,7 +97,7 @@ Run the full setup from the repository root:
 ./scripts/setup-dev.sh
 ```
 
-The script asks for the PostgreSQL database/user, Better Auth secret, PostgreSQL password, file-encryption KEK, and Resend API key. On a fresh setup, leave the Better Auth secret, PostgreSQL password, and KEK blank to generate random values. Existing values are kept when you press Enter. Resend cannot be generated; leave it blank to skip email setup. Email verification and password-reset flows need a valid Resend key.
+The script asks for the PostgreSQL database/user, Better Auth secret, PostgreSQL password, file-encryption KEK, and email provider. On a fresh setup, leave the Better Auth secret, PostgreSQL password, and KEK blank to generate random values. Existing values are kept when you press Enter. The default email provider is `console`, which supports verification and password reset without an email-service account. Choosing `resend` prompts for a required Resend API key.
 
 The script installs dependencies with Corepack/pnpm, generates the Prisma client and TLS certificates, builds and starts the services, then applies database migrations. It keeps `.env` and private keys out of Git. It does not change your hosts file or OS/browser trust store, so add this entry if needed and trust the local CA certificate:
 
@@ -97,15 +111,53 @@ Useful commands:
 
 ```sh
 docker compose logs -f app       # follow application logs
-docker compose down              # stop and remove containers; keep database data
-docker compose down -v           # also delete database data permanently
+docker compose down              # stop and remove containers; keep database and encrypted files
+docker compose down -v           # permanently delete both database and encrypted-file volumes
 ```
 
 The app image uses Next.js standalone output and a multi-stage build. Compose waits for PostgreSQL's health check before starting the app. Migrations run from `setup-dev.sh`; they do not run automatically when starting Compose directly.
 
+When upgrading an existing installation, run `corepack pnpm exec prisma migrate deploy` with the database running. The session-policy migration caps existing session expiry at 24 hours after creation without extending earlier expiry times. Sessions already older than 24 hours will require a new sign-in.
+
+Checks available after installing dependencies:
+
+```sh
+corepack pnpm test               # download-header regression tests (Node.js 24)
+corepack pnpm lint
+corepack pnpm build
+```
+
+## Email Verification and Password Reset
+
+Better Auth generates and validates the verification and password-reset links. Both expire after one hour. Verification is required before signing in; opening a valid verification link also signs the user in. Sessions expire after 24 hours without sliding refresh, and session-cookie caching is disabled so logout and password-reset revocation take effect on the next request. The setup uses HTTPS because session cookies are always Secure.
+
+`EmailService` in `src/lib/emails/service.ts` renders the templates and prepares messages, including the sender, recipient, and inline logo attachment. Providers implement `sendEmail(message)` and only deliver the finished content. `src/lib/email.ts` selects the provider and connects the service to Better Auth's callbacks.
+
+The templates in `src/lib/emails/email-templates.ts` share the application's monochrome colors, rounded card, dark action button, and lock icon. Both include a personalized greeting, expiration information, a copyable link, and a plain-text alternative. Dynamic HTML values are escaped.
+
+The HTML header uses a PNG rendition of the application's Lucide `LockKeyhole` logo, embedded as a CID attachment; it does not require an externally hosted image. The image is bundled in `src/lib/emails/logo.ts` so standalone Docker builds can send it without additional asset configuration. Plain-text and console messages retain the application name.
+
+Email delivery is configured in `.env`; see `.env.example` for all settings:
+
+| Variable | Purpose |
+| --- | --- |
+| `EMAIL_PROVIDER` | `console` prints messages to server logs; `resend` delivers through Resend. Defaults to `console` when unset. Unsupported or empty values cause an error when email is used. |
+| `EMAIL_FROM` | Sender name and address. Defaults to `SecureFileManager <onboarding@resend.dev>`. For real Resend recipients, configure a sender on your verified domain. |
+| `RESEND_API_KEY` | Required only for the `resend` provider. |
+
+For local development or a demonstration, set `EMAIL_PROVIDER=console`. No email-service account or API key is required. Register an account or request a password reset, then follow the application logs:
+
+```sh
+docker compose logs -f app
+```
+
+Open the link printed for your email address in the browser. Console messages include the sender, recipient, subject, and plain-text body. These links grant account access, so keep the logs private. Provider selection is independent of `NODE_ENV`, so console delivery also works with the production build used by Docker.
+
+To send to inboxes, set `EMAIL_PROVIDER=resend`, supply `RESEND_API_KEY`, and configure `EMAIL_FROM` for your Resend sender. Delivery failures reject the send operation and never switch providers automatically. Better Auth handles errors from its email callbacks; the service does not change its authentication responses. Configuration is resolved on first use, so builds do not require email credentials. Restart the application after changing email settings; for Docker, recreate the app container with `docker compose up -d app`.
+
 ## Security & Threat Model
 
-For detailed information about the security architecture, threat analysis, and mitigation strategies implemented in this system, see [THREAT_MODEL.md](docs/THREAT_MODEL.md) and [AUTHENTICATION_AND_SESSION_MODEL.md](docs/AUTHENTICATION_AND_SESSION_MODEL.md).
+For the security architecture, threat analysis, and planned mitigations, see [THREAT_MODEL.md](docs/THREAT_MODEL.md). The implemented authentication and session policy is described in [AUTHENTICATION_AND_SESSION_MODEL.md](docs/AUTHENTICATION_AND_SESSION_MODEL.md).
 
 ---
 

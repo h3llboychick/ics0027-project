@@ -53,7 +53,7 @@ export function SignupForm({ ...props }: React.ComponentProps<typeof Card>) {
         const id = toast.add({
           type: "error",
           title: "Error occured",
-          description: `${error.message}`,
+          description: `${error.message ?? "Unexpected error"}`,
           actionProps: { 
             children: "Undo",
             onClick() {

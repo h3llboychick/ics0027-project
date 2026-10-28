@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { authClient } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,20 +13,10 @@ import {
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 
-export function ResetPasswordForm() {
-  const [token, setToken] = useState<string | null>(null);
-  const [linkChecked, setLinkChecked] = useState(false);
+export function ResetPasswordForm({ token }: { token: string | null }) {
   const [resetPending, setResetPending] = useState(false);
   const [resetComplete, setResetComplete] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const search = new URLSearchParams(window.location.search);
-    const resetToken = search.get("token");
-
-    setToken(search.has("error") ? null : resetToken);
-    setLinkChecked(true);
-  }, []);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -73,9 +63,7 @@ export function ResetPasswordForm() {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        {!linkChecked ? (
-          <p role="status" className="text-sm text-muted-foreground">Checking reset link…</p>
-        ) : resetComplete ? (
+        {resetComplete ? (
           <div className="space-y-4">
             <p role="status" className="text-sm text-foreground">
               Your password has been updated. Sign in with your new password.

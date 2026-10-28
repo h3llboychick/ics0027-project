@@ -5,6 +5,7 @@ import { FileService } from "@/lib/files/service";
 import { prismaFileRepository } from "@/lib/files/repository/prisma-file-repository";
 import { diskStorage } from "@/lib/files/storage/disk-storage";
 import { apiErrorResponse } from "@/lib/http/api-error-response";
+import { createFileDownloadResponse } from "@/lib/http/download-response";
 
 type RouteContext = {
     params: Promise<{ fileId: string }>
@@ -26,24 +27,16 @@ export async function GET(request: NextRequest, context: RouteContext) {
   }
 
   const fileService = new FileService(prismaFileRepository, diskStorage);
-  let file: File | undefined;
   try {
-    file = await fileService.downloadFile(session.user.id, validatedFileId);
+    const file = await fileService.downloadFile(session.user.id, validatedFileId);
+    if (!file) {
+      return NextResponse.json({ error: 'FILE_NOT_FOUND' }, { status: 404 });
+    }
+
+    return createFileDownloadResponse(file);
   } catch (error) {
     return apiErrorResponse(error, 'GET /api/files/[fileId] download failed');
   }
-
-  if (!file) {
-    return NextResponse.json({ error: 'FILE_NOT_FOUND' }, { status: 404 });
-  }
-
-  // Response returned
-  return new Response(file, {
-      headers: {
-        'Content-Type': 'application/octet-stream', 
-        'Content-Disposition': `attachment; filename="${file?.name}"`,
-      }
-    })
 }
 
 

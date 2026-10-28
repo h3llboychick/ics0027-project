@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useRef, useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight, Download, FileText, Trash2, Upload } from "lucide-react";
 import {
   DEFAULT_PAGE_SIZE,
@@ -32,9 +31,16 @@ function formatBytes(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+async function fetchFilePage(page: number, pageSize: number, signal: AbortSignal) {
+  const query = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+  const response = await fetch(`/api/files?${query}`, { cache: "no-store", signal });
+  if (!response.ok) throw new Error(`Could not load files (${response.status})`);
+  return listFilesResponseSchema.parse(await response.json());
+}
+
 export function FileTransfer() {
-  const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
+  const listingRequestRef = useRef<AbortController | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -44,28 +50,36 @@ export function FileTransfer() {
   const [message, setMessage] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
-  const [loadingFiles, setLoadingFiles] = useState(false);
+  const [loadingFiles, setLoadingFiles] = useState(true);
   const [hasMorePages, setHasMorePages] = useState(false);
 
 
-  const loadFiles = useCallback(async (page: number) => {
+  const loadFiles = useCallback((page: number) => {
+    listingRequestRef.current?.abort();
+    const controller = new AbortController();
+    listingRequestRef.current = controller;
+
+    return fetchFilePage(page, pageSize, controller.signal)
+      .then((result) => {
+        if (controller.signal.aborted) return;
+        setUploadedFiles(result.files);
+        setCurrentPage(result.page);
+        setHasMorePages(result.hasMorePages);
+      })
+      .catch((cause: unknown) => {
+        if (controller.signal.aborted) return;
+        setError(cause instanceof Error ? cause.message : "Loading files failed");
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoadingFiles(false);
+      });
+  }, [pageSize]);
+
+  async function refreshFiles(page: number) {
     setLoadingFiles(true);
     setError(null);
-    try {
-      const query = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
-      const response = await fetch(`/api/files?${query}`, { cache: "no-store" });
-      if (!response.ok) throw new Error(`Could not load files (${response.status})`);
-      const result = listFilesResponseSchema.parse(await response.json());
-
-      setUploadedFiles(result.files);
-      setCurrentPage(result.page);
-      setHasMorePages(result.hasMorePages);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Loading files failed");
-    } finally {
-      setLoadingFiles(false);
-    }
-  }, [pageSize]);
+    await loadFiles(page);
+  }
 
   async function uploadFile(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -99,7 +113,7 @@ export function FileTransfer() {
       setMessage(`${selectedFile.name} uploaded and encrypted.`);
       setSelectedFile(null);
       if (inputRef.current) inputRef.current.value = "";
-      await loadFiles(1);
+      await refreshFiles(1);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Upload failed.");
     } finally {
@@ -166,7 +180,7 @@ export function FileTransfer() {
 
       setUploadedFiles(remainingFiles);
       setMessage(`${file.filename} deleted.`);
-      await loadFiles(nextPage);
+      await refreshFiles(nextPage);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Delete failed.");
     } finally {
@@ -176,6 +190,7 @@ export function FileTransfer() {
 
   useEffect(() => {
     void loadFiles(1);
+    return () => listingRequestRef.current?.abort();
   }, [loadFiles]);
 
   return (
@@ -246,9 +261,13 @@ export function FileTransfer() {
               <select
                 id="page-size"
                 value={pageSize}
+                disabled={uploading || deletingId !== null}
                 onChange={(event) => {
                   const nextPageSize = Number(event.currentTarget.value);
                   if (!SUPPORTED_PAGE_SIZES.includes(nextPageSize)) return;
+                  if (nextPageSize === pageSize) return;
+                  setLoadingFiles(true);
+                  setError(null);
                   setPageSize(nextPageSize);
                   setCurrentPage(1);
                 }}
@@ -314,7 +333,7 @@ export function FileTransfer() {
         <nav className="mt-4 flex items-center justify-center gap-4" aria-label="File list pages">
           <button
             type="button"
-            onClick={() => void loadFiles(currentPage - 1)}
+            onClick={() => void refreshFiles(currentPage - 1)}
             disabled={loadingFiles || currentPage === 1}
             className="inline-flex h-9 items-center gap-1 rounded-lg border border-[#d9e3dc] px-3 text-sm font-medium transition hover:bg-[#f3f4f6] disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -326,7 +345,7 @@ export function FileTransfer() {
           </span>
           <button
             type="button"
-            onClick={() => void loadFiles(currentPage + 1)}
+            onClick={() => void refreshFiles(currentPage + 1)}
             disabled={loadingFiles || !hasMorePages}
             className="inline-flex h-9 items-center gap-1 rounded-lg border border-[#d9e3dc] px-3 text-sm font-medium transition hover:bg-[#f3f4f6] disabled:cursor-not-allowed disabled:opacity-50"
           >

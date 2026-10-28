@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
@@ -33,51 +34,36 @@ function failureDescription(errorCode: string | null) {
   }
 }
 
-export function EmailVerificationResult() {
+type EmailVerificationResultProps = {
+  fromEmail: boolean;
+  verificationError: string | null;
+};
+
+export function EmailVerificationResult({ fromEmail, verificationError }: EmailVerificationResultProps) {
   const router = useRouter();
   const { data: session, isPending: isSessionPending } = authClient.useSession();
-  const [kind, setKind] = useState<ResultKind>("checking");
-  const [errorCode, setErrorCode] = useState<string | null>(null);
   const [email, setEmail] = useState("");
   const [resending, setResending] = useState(false);
   const [resendRequested, setResendRequested] = useState(false);
   const [resendError, setResendError] = useState<string | null>(null);
   const [signOutError, setSignOutError] = useState<string | null>(null);
 
+  let kind: ResultKind;
+  if (isSessionPending) kind = "checking";
+  else if (!fromEmail) kind = "missing";
+  else if (verificationError) kind = session?.user?.emailVerified ? "failed-signed-in" : "failed";
+  else if (session?.user?.emailVerified) kind = "confirmed";
+  else if (!session?.user) kind = "confirmed-no-session";
+  else kind = "failed";
+
+  const errorCode = verificationError || (kind === "failed" ? "EMAIL_NOT_VERIFIED" : null);
+
   useEffect(() => {
-    if (isSessionPending) return;
+    if (kind !== "confirmed") return;
 
-    const params = new URLSearchParams(window.location.search);
-    const verificationError = params.get("error");
-    setErrorCode(verificationError);
-
-    if (params.get("from") !== "email") {
-      setKind("missing");
-      return;
-    }
-
-    if (verificationError) {
-      setKind(session?.user?.emailVerified ? "failed-signed-in" : "failed");
-      return;
-    }
-
-    if (session?.user?.emailVerified) {
-      setKind("confirmed");
-      const redirectTimer = window.setTimeout(() => {
-        router.replace("/");
-      }, 3000);
-
-      return () => window.clearTimeout(redirectTimer);
-    }
-
-    if (!session?.user) {
-      setKind("confirmed-no-session");
-      return;
-    }
-
-    setKind("failed");
-    setErrorCode("EMAIL_NOT_VERIFIED");
-  }, [isSessionPending, router, session]);
+    const redirectTimer = window.setTimeout(() => router.replace("/"), 3000);
+    return () => window.clearTimeout(redirectTimer);
+  }, [kind, router]);
 
   async function requestAnotherLink(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -139,9 +125,9 @@ export function EmailVerificationResult() {
           <CardDescription>Your email is verified. Taking you to your files in a few seconds.</CardDescription>
         </CardHeader>
         <CardContent>
-          <a className="text-sm font-medium underline underline-offset-4" href="/">
+          <Link className="text-sm font-medium underline underline-offset-4" href="/">
             Continue to your files now
-          </a>
+          </Link>
         </CardContent>
       </Card>
     );
