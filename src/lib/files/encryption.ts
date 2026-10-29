@@ -1,12 +1,12 @@
 import crypto from 'crypto';
 import { FileEncryptionError } from './errors';
 
-const FILE_ENCRYPTION_KEK_HEX = process.env.FILE_ENCRYPTION_KEK;
 const AES_256_GCM_ALGORITHM = 'aes-256-gcm';
 const AES_GCM_IV_LENGTH_BYTES = 12; // https://developer.mozilla.org/en-US/docs/Web/API/AesGcmParams recommend IV to be 96 bits (12 bytes) long
 const DATA_ENCRYPTION_KEY_LENGTH_BYTES = 32;
 
 function readKeyEncryptionKey(): Uint8Array<ArrayBuffer> {
+    const FILE_ENCRYPTION_KEK_HEX = process.env.FILE_ENCRYPTION_KEK;
     if (!FILE_ENCRYPTION_KEK_HEX || !/^[\da-f]{64}$/i.test(FILE_ENCRYPTION_KEK_HEX)) {
         throw new Error('FILE_ENCRYPTION_KEK must be a 32-byte hexadecimal key.');
     }

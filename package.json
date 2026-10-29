@@ -7,8 +7,12 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "node --test tests/*.test.mjs",
-    "lint": "eslint"
+    "build:worker": "prisma generate && node scripts/build-worker.mjs",
+    "worker": "node --env-file=.env dist/worker/worker.js",
+    "test": "node --import ./tests/register.mjs --test tests/*.test.mjs",
+    "test:integration": "pnpm build:worker && node scripts/test-file-operations.mjs",
+    "lint": "eslint",
+    "test:compose": "node scripts/test-file-compose.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",

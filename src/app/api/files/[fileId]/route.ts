@@ -6,6 +6,8 @@ import { prismaFileRepository } from "@/lib/files/repository/prisma-file-reposit
 import { diskStorage } from "@/lib/files/storage/disk-storage";
 import { apiErrorResponse } from "@/lib/http/api-error-response";
 import { createFileDownloadResponse } from "@/lib/http/download-response";
+import { operationRepository } from '@/lib/files/runtime';
+import { publicOperation } from '@/lib/files/operations/model';
 
 type RouteContext = {
     params: Promise<{ fileId: string }>
@@ -26,7 +28,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     return apiErrorResponse(err, 'GET /api/files/[fileId] validation failed');
   }
 
-  const fileService = new FileService(prismaFileRepository, diskStorage);
+  const fileService = new FileService(prismaFileRepository, diskStorage, operationRepository);
   try {
     const file = await fileService.downloadFile(session.user.id, validatedFileId);
     if (!file) {
@@ -55,7 +57,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     return apiErrorResponse(err, 'DELETE /api/files/[fileId] validation failed');
   }
 
-  const fileService = new FileService(prismaFileRepository, diskStorage);
+  const fileService = new FileService(prismaFileRepository, diskStorage, operationRepository);
   let deletedFileId;
   try {
     deletedFileId = await fileService.deleteFile(session.user.id, validatedFileId);
@@ -64,9 +66,8 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
   }
 
   if (!deletedFileId) return NextResponse.json({ error: 'FILE_NOT_FOUND' }, { status: 404 });
-  return new Response(null, 
-    { 
-      status: 204 
-    }
-  );
+  return NextResponse.json(publicOperation(deletedFileId), {
+    status: deletedFileId.status === 'SUCCEEDED' ? 200 : 202,
+    headers: { 'Cache-Control': 'no-store' },
+  });
 }

@@ -1,93 +1,82 @@
-import { FileListings, FileRepository } from "./repository/base";
-import { FileStorage } from "./storage/base";
-import { aesGcmFileEncryptor } from "./encryption";
-import { FileUploadError, FileUploadRollbackError } from "./errors";
-import crypto from 'crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import type { FileRepository } from './repository/base';
+import type { FileStorage } from './storage/base';
+import { aesGcmFileEncryptor } from './encryption';
+import { FileStorageError } from './errors';
+import { OperationRepository } from './operations/repository';
+import { OperationCoordinator } from './operations/coordinator';
+import { publicOperation, type Operation } from './operations/model';
+import { idempotencyKeySchema, uploadFileRequestSchema } from '../contracts/files';
 
 export class FileService {
-    constructor(private readonly repository: FileRepository, private readonly storage: FileStorage) {}
+  constructor(private readonly repository: FileRepository, private readonly storage: FileStorage,
+    readonly operations: OperationRepository) {}
 
-    async listForOwner(
-        ownerId: string,
-        page: number,
-        pageSize: number,
-    ): Promise<FileListings> {
-        return await this.repository.listByOwner(ownerId, page, pageSize)
+  listForOwner(ownerId: string, page: number, pageSize: number) {
+    return this.repository.listByOwner(ownerId, page, pageSize);
+  }
+
+  async uploadFile(ownerId: string, file: File, key: string, signal?: AbortSignal) {
+    uploadFileRequestSchema.parse(file);
+    idempotencyKeySchema.parse(key);
+    signal?.throwIfAborted();
+    const bytes = await file.bytes();
+    signal?.throwIfAborted();
+    const fingerprint = createHash('sha256').update(JSON.stringify([file.name, file.size])).update(bytes).digest('hex');
+    let encrypted;
+    try {
+      const existing = await this.operations.findByKey(ownerId, 'UPLOAD', key);
+      if (existing) return this.uploadResult(existing, fingerprint, true);
+      encrypted = aesGcmFileEncryptor.encrypt(bytes);
+    } finally { bytes.fill(0); }
+    signal?.throwIfAborted()
+    let operation;
+    try {
+      operation = await this.operations.reserve({
+        id: randomUUID(), ownedBy: ownerId, filename: file.name, fileSizeBytes: file.size,
+        encryptedFileAuthTag: encrypted.encryptedContent.authTag, encryptedFileIV: encrypted.encryptedContent.iv,
+        protectedEncryptionKey: encrypted.encryptedDataKey.ciphertext,
+        protectedEncryptionKeyIV: encrypted.encryptedDataKey.iv, protectedEncryptionKeyAuthTag: encrypted.encryptedDataKey.authTag,
+      }, key, fingerprint);
+    } catch (error) {
+      // Duplicate upload request race under unique-key loser and unknown COMMIT both resolve by the original key.
+      const persisted = await this.operations.findByKey(ownerId, 'UPLOAD', key);
+      if (persisted) return this.uploadResult(persisted, fingerprint, true);
+      throw error;
     }
+    // From this point the request's cancellation signal is deliberately detached.
+    const result = await new OperationCoordinator(this.operations, this.storage).upload(operation, encrypted.encryptedContent.ciphertext);
+    return this.uploadResult(result, fingerprint, false);
+  }
 
-    async uploadFile(
-        ownerId: string,
-        file: File
-    ): Promise<crypto.UUID> {
-        const fileId = crypto.randomUUID();
-        let fileBytes: Uint8Array<ArrayBuffer>;
-        try {
-            fileBytes = await file.bytes();
-        } catch (error) {
-            throw new FileUploadError("Could not read uploaded file", { cause: error });
-        }
-        const encryptedContent = aesGcmFileEncryptor.encrypt(fileBytes);
+  private uploadResult(operation: Operation, fingerprint: string, repeated: boolean) {
+    const body = publicOperation(operation);
+    if (operation.inputFingerprint !== fingerprint) return { status: 409, body: { ...body, error: 'IDEMPOTENCY_CONFLICT' } };
+    if (operation.status === 'FAILED' || operation.status === 'NEEDS_ATTENTION') return { status: 409, body };
+    return { status: operation.status === 'SUCCEEDED' ? (repeated ? 200 : 201) : 202, body };
+  }
 
-        await this.storage.put(fileId, encryptedContent.encryptedContent.ciphertext);
-        try {
-            await this.repository.create({
-                id: fileId,
-                ownedBy: ownerId,
-                filename: file.name,
-                fileSizeBytes: file.size,
-                encryptedFileAuthTag: encryptedContent.encryptedContent.authTag,
-                encryptedFileIV: encryptedContent.encryptedContent.iv,
-                protectedEncryptionKey: encryptedContent.encryptedDataKey.ciphertext,
-                protectedEncryptionKeyIV: encryptedContent.encryptedDataKey.iv,
-                protectedEncryptionKeyAuthTag: encryptedContent.encryptedDataKey.authTag,
-            });
-        } catch (metadataError) {
-            try {
-                await this.storage.delete(fileId);
-            } catch (cleanupError) {
-                throw new FileUploadRollbackError({
-                    cause: new AggregateError([metadataError, cleanupError]),
-                });
-            }
-            throw metadataError;
-        }
-
-        return fileId;
+  async downloadFile(ownerId: string, fileId: string): Promise<File | undefined> {
+    const metadata = await this.repository.getFileEncryptionMetadata(fileId, ownerId);
+    if (!metadata) return undefined;
+    const ciphertext = metadata.storageKey ? await this.storage.get(metadata.storageKey, AbortSignal.timeout(this.operations.config.ioTimeoutMs)) : null;
+    if (!ciphertext) {
+      console.warn(JSON.stringify({ event: 'ready_blob_missing', fileId }));
+      throw new FileStorageError('Stored content is unavailable');
     }
+    const plaintext = aesGcmFileEncryptor.decrypt({
+      encryptedContent: { iv: metadata.encryptedFileIV, ciphertext, authTag: metadata.encryptedFileAuthTag },
+      encryptedDataKey: { iv: metadata.protectedEncryptionKeyIV, ciphertext: metadata.protectedEncryptionKey, authTag: metadata.protectedEncryptionKeyAuthTag },
+    });
+    try { return new File([plaintext], metadata.filename); } finally { plaintext.fill(0); }
+  }
 
-    async downloadFile(
-        ownerId: string,
-        fileId: string
-    ): Promise<File | undefined> {
-        const fileMetadata = await this.repository.getFileEncryptionMetadata(fileId, ownerId);
-        if (!fileMetadata) return undefined;
-
-        const encryptedFile = await this.storage.get(fileId);
-        if (!encryptedFile) return undefined;
-
-        const decryptedFileBytes = aesGcmFileEncryptor.decrypt({
-            encryptedContent: {
-                iv: fileMetadata.encryptedFileIV,
-                ciphertext: encryptedFile,
-                authTag: fileMetadata.encryptedFileAuthTag,
-            },
-            encryptedDataKey: {
-                iv: fileMetadata.protectedEncryptionKeyIV,
-                ciphertext: fileMetadata.protectedEncryptionKey,
-                authTag: fileMetadata.protectedEncryptionKeyAuthTag,
-            },
-        });
-
-        return new File([decryptedFileBytes], fileMetadata.filename);
+  async deleteFile(ownerId: string, fileId: string) {
+    try { return await this.operations.acceptDelete(ownerId, fileId); }
+    catch (error) {
+      const existing = await this.operations.findDelete(ownerId, fileId);
+      if (existing) return existing;
+      throw error;
     }
-
-    async deleteFile(ownerId: string, fileId: string): Promise<string | null> {
-        const fileMetadata = await this.repository.getFileEncryptionMetadata(fileId, ownerId);
-        if (!fileMetadata) return null;
-
-        await this.storage.delete(fileId);
-        await this.repository.deleteById(fileId, ownerId);
-
-        return fileId;
-    }
+  }
 }

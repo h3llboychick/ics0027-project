@@ -14,10 +14,13 @@ export function apiErrorResponse(error: unknown, context: string): NextResponse 
   }
 
   if (error instanceof FileOperationError) {
-    console.error(`${context}: ${error.message}`, error);
+    console.error(JSON.stringify({ context, code: error.code }));
     return NextResponse.json({ error: error.code }, { status: 500 });
   }
 
-  console.error(`${context}: unexpected error`, error);
+  if (error instanceof Error && error.name === 'AbortError') {
+    return NextResponse.json({ error: 'REQUEST_CANCELLED' }, { status: 408 });
+  }
+  console.error(JSON.stringify({ context, code: 'DEPENDENCY_UNAVAILABLE' }));
   return NextResponse.json({ error: "INTERNAL_SERVER_ERROR" }, { status: 500 });
 }

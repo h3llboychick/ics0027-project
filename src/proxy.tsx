@@ -10,9 +10,6 @@ export async function proxy(request: NextRequest) {
     if (!session) {
         return NextResponse.redirect(new URL("/sign-in", request.url));
     }
-    // TODO: Create redirects for users with unverified emails
-
-
     return NextResponse.next();
 }
 

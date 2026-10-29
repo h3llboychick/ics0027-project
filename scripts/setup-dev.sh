@@ -209,11 +209,20 @@ prompt_secret FILE_ENCRYPTION_KEK "File encryption KEK" 32 kek
 prompt_email_provider
 
 auth_url="$(read_env BETTER_AUTH_URL)"
-if [[ -z "$auth_url" || "$auth_url" == "http://localhost:3000" ]]; then
+if [[ -z "$auth_url" || "$auth_url" == "http://localhost:3000" || "$auth_url" == "$DEV_HOST" ]]; then
   write_env BETTER_AUTH_URL "$DEV_URL"
+  auth_url="$DEV_URL"
 elif [[ "$auth_url" != "$DEV_URL" ]]; then
   printf 'setup-dev: keeping your custom BETTER_AUTH_URL value.\n'
 fi
+
+SETUP_AUTH_URL="$auth_url" node -e '
+  try {
+    const value = process.env.SETUP_AUTH_URL;
+    const url = new URL(value);
+    if (!["http:", "https:"].includes(url.protocol) || url.origin !== value.replace(/\/$/, "")) process.exit(1);
+  } catch { process.exit(1); }
+' || die "BETTER_AUTH_URL must be a full external origin including protocol and port, for example $DEV_URL."
 
 auth_secret="$(read_env BETTER_AUTH_SECRET)"
 [[ ${#auth_secret} -ge 32 ]] || die "BETTER_AUTH_SECRET must contain at least 32 characters."
@@ -325,8 +334,8 @@ printf '\nInstalling project dependencies with Corepack and pnpm...\n'
 printf '\nGenerating the Prisma client...\n'
 (cd "$ROOT_DIR" && corepack pnpm exec prisma generate)
 
-printf '\nBuilding and starting the application stack...\n'
-(cd "$ROOT_DIR" && docker compose up --build -d)
+printf '\nStarting PostgreSQL before applying migrations...\n'
+(cd "$ROOT_DIR" && docker compose up -d db)
 
 printf 'Waiting for PostgreSQL to become ready...\n'
 db_ready=false
@@ -341,6 +350,9 @@ done
 
 printf '\nApplying database migrations...\n'
 (cd "$ROOT_DIR" && corepack pnpm exec prisma migrate deploy)
+
+printf '\nBuilding and starting web, worker, and nginx...\n'
+(cd "$ROOT_DIR" && docker compose up --build -d app worker nginx)
 
 if [[ "$(read_env EMAIL_PROVIDER)" == console ]]; then
   printf '\nEmail verification and password-reset messages are printed to application logs.\n'

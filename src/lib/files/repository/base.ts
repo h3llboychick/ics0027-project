@@ -19,6 +19,7 @@ export type FileMetadata = {
 }
 
 export type FileEncryptionMetadata = FileMetadata & {
+    storageKey: string | null;
     encryptedFileAuthTag: Uint8Array<ArrayBuffer>;
     encryptedFileIV: Uint8Array<ArrayBuffer>;
     protectedEncryptionKey: Uint8Array<ArrayBuffer>;
@@ -33,10 +34,8 @@ export type FileListings = {
 }
 
 export interface FileRepository {
-    create(input: CreateFileMetadata): Promise<FileMetadata>;
     findById(id: string, ownerId: string): Promise<FileMetadata | null>;
     getFileEncryptionMetadata(id: string, ownerId: string): Promise<FileEncryptionMetadata | null>;
     listByOwner(ownerId: string, page: number, pageSize: number): Promise<FileListings>
-    deleteById(id: string, ownerId: string): Promise<void>;
 }
 

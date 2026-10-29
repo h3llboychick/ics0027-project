@@ -11,15 +11,37 @@ services:
       - app
 
   app:
+    image: ics0027-file-manager:local
     container_name: secure-file-manager-app
     build:
       context: .
+      args:
+        NEXT_PUBLIC_FILE_OPERATION_POLL_MS: ${NEXT_PUBLIC_FILE_OPERATION_POLL_MS:-2000}
     env_file:
       - .env
     environment:
       NODE_ENV: production
       PORT: 3000
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:-https://secure-file-manager.dev:8443}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-storage}:${POSTGRES_PASSWORD:-storage_dev_password}@db:5432/${POSTGRES_DB:-storage}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - encrypted_files:/app/storage
+
+  worker:
+    image: ics0027-file-manager:local
+    build:
+      context: .
+      args:
+        NEXT_PUBLIC_FILE_OPERATION_POLL_MS: ${NEXT_PUBLIC_FILE_OPERATION_POLL_MS:-2000}
+    command: ["node", "dist/worker/worker.js"]
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
       DATABASE_URL: postgresql://${POSTGRES_USER:-storage}:${POSTGRES_PASSWORD:-storage_dev_password}@db:5432/${POSTGRES_DB:-storage}
     depends_on:
       db:

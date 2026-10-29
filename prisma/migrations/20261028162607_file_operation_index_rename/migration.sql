@@ -1,0 +1,2 @@
+-- RenameIndex
+ALTER INDEX "file_operation_cleanupStatus_cleanupNextAttemptAt_cleanupLeaseU" RENAME TO "file_operation_cleanupStatus_cleanupNextAttemptAt_cleanupLe_idx";

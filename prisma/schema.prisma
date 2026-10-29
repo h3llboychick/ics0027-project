@@ -23,6 +23,7 @@ model User {
   sessions      Session[]
   accounts      Account[]
   files FileMetadata[]
+  fileOperations FileOperation[]
 
   @@unique([email])
   @@map("user")
@@ -87,9 +88,74 @@ model FileMetadata {
   protectedEncryptionKeyIV Bytes
   protectedEncryptionKeyAuthTag Bytes
   createdAt     DateTime @default(now())
+  status        FileStatus @default(UPLOADING)
+  statusChangedAt DateTime @default(now())
+  updatedAt     DateTime @default(now()) @updatedAt
+  storageKey    String? @unique
+  currentOperationId String?
 
-  owner User @relation(fields: [ownedBy], references: [id], onDelete: Cascade)
+  owner User @relation(fields: [ownedBy], references: [id], onDelete: Restrict)
   
   @@index([ownedBy])
   @@map("file_metadata")
+}
+
+enum FileStatus {
+  UPLOADING
+  READY
+  DELETING
+  FAILED
+}
+
+enum FileOperationType {
+  UPLOAD
+  DELETE
+}
+
+enum FileOperationStatus {
+  PENDING
+  RUNNING
+  RETRY_WAIT
+  SUCCEEDED
+  FAILED
+  NEEDS_ATTENTION
+}
+
+model FileOperation {
+  id String @id
+  ownerId String
+  // Deliberately no foreign key to file_metadata: receipts outlive files.
+  fileId String
+  type FileOperationType
+  idempotencyKey String
+  inputFingerprint String
+  status FileOperationStatus
+  phase String
+  attemptCount Int @default(0)
+  nextAttemptAt DateTime @default(now())
+  leaseToken String?
+  leaseUntil DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+  lastAttemptAt DateTime?
+  finishedAt DateTime?
+  lastErrorCode String?
+  lastErrorMessage String?
+  result Json?
+  candidates Json @default("[]")
+  // Separate durable housekeeping, including after the main job succeeds.
+  cleanupStatus String @default("NONE")
+  cleanupAttemptCount Int @default(0)
+  cleanupNextAttemptAt DateTime @default(now())
+  cleanupLeaseToken String?
+  cleanupLeaseUntil DateTime?
+  cleanupErrorCode String?
+  owner User @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+
+  @@unique([ownerId, type, idempotencyKey])
+  @@index([fileId, type])
+  @@index([ownerId])
+  @@index([status, nextAttemptAt, leaseUntil])
+  @@index([cleanupStatus, cleanupNextAttemptAt, cleanupLeaseUntil])
+  @@map("file_operation")
 }

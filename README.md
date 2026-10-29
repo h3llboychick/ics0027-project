@@ -35,7 +35,7 @@ Docker Compose simplifies deployment by defining and orchestrating all services 
 - Uploading files over TLS and encrypting them before they are written to storage
 - Listing and paginating only the authenticated user's files
 - Downloading and decrypting files after a server-side ownership check
-- Deleting files owned by the authenticated user
+- Durable, idempotent uploads and asynchronous deletion with operation receipts and a recovery worker
 - Backend validation of filenames and a 25 MiB per-file upload limit; nginx applies a separate request-body limit
 
 Planned features:
@@ -63,9 +63,11 @@ Planned features:
 | Method | Route | Access | Purpose |
 | --- | --- | --- | --- |
 | `GET` | `/api/files` | Authenticated | Lists the current user's file metadata. Supports `page` (default `1`) and `pageSize` (`10`, `20`, or `40`; default `10`). |
-| `POST` | `/api/files` | Authenticated | Uploads a file using `multipart/form-data`. The backend validates the request, encrypts the file, and stores its metadata. |
+| `POST` | `/api/files` | Authenticated | Uploads a file using `multipart/form-data`. Requires a stable `Idempotency-Key`; returns 201 only after READY, or 202 for durable pending work. |
+| `GET` | `/api/file-operations/{id}` | Authenticated owner | Returns an operation status without keys or storage paths. |
+| `GET` | `/api/file-operations?type=UPLOAD&idempotencyKey=...` | Authenticated | Resolves an upload after a lost response. |
 | `GET` | `/api/files/{id}` | Authenticated owner | Checks ownership, decrypts the requested file, and returns it as a download. |
-| `DELETE` | `/api/files/{id}` | Authenticated owner | Checks ownership and deletes the file and its associated metadata. |
+| `DELETE` | `/api/files/{id}` | Authenticated owner | Durably accepts deletion (202), hides the file, and lets the worker remove content and complete its receipt. |
 
 Every file endpoint validates the session on the server. Routes containing `{id}` use an opaque, server-generated file identifier and verify that the file's `ownedBy` field matches the authenticated user's ID.
 
@@ -89,7 +91,7 @@ The catch-all handler may expose additional Better Auth framework endpoints, but
 
 ## Running the Application with Docker
 
-Docker Compose runs the Next.js app, PostgreSQL, and an nginx TLS reverse proxy. The database and encrypted files are kept in named volumes. You need Docker with the Compose plugin, Node.js 24 with Corepack, and OpenSSL.
+Docker Compose runs the Next.js app, one file recovery worker, PostgreSQL, and an nginx TLS reverse proxy. The database and encrypted files are kept in named volumes. You need Docker with the Compose plugin, Node.js 24 with Corepack, and OpenSSL.
 
 Run the full setup from the repository root:
 
@@ -99,7 +101,7 @@ Run the full setup from the repository root:
 
 The script asks for the PostgreSQL database/user, Better Auth secret, PostgreSQL password, file-encryption KEK, and email provider. On a fresh setup, leave the Better Auth secret, PostgreSQL password, and KEK blank to generate random values. Existing values are kept when you press Enter. The default email provider is `console`, which supports verification and password reset without an email-service account. Choosing `resend` prompts for a required Resend API key.
 
-The script installs dependencies with Corepack/pnpm, generates the Prisma client and TLS certificates, builds and starts the services, then applies database migrations. It keeps `.env` and private keys out of Git. It does not change your hosts file or OS/browser trust store, so add this entry if needed and trust the local CA certificate:
+The script installs dependencies with Corepack/pnpm, generates the Prisma client and TLS certificates, starts PostgreSQL, applies database migrations, then builds and starts web, worker, and nginx. It keeps `.env` and private keys out of Git. It does not change your hosts file or OS/browser trust store, so add this entry if needed and trust the local CA certificate:
 
 ```text
 127.0.0.1 secure-file-manager.dev
@@ -107,22 +109,26 @@ The script installs dependencies with Corepack/pnpm, generates the Prisma client
 
 Trust `certs/ca/root-ca.crt`, then open [https://secure-file-manager.dev:8443](https://secure-file-manager.dev:8443). PostgreSQL is available on port `5432` from your machine and on `db:5432` from the app container.
 
+`BETTER_AUTH_URL` must match the complete browser origin: `https://secure-file-manager.dev:8443` for this setup. A bare hostname or a stale `http://localhost:3000` value causes authentication origin errors. After changing `.env`, recreate the app container with `docker compose up -d --no-deps --force-recreate app`; a restart alone does not update container environment variables. Reload nginx with `docker compose exec -T nginx nginx -s reload` if the app's container address changes.
+
 Useful commands:
 
 ```sh
-docker compose logs -f app       # follow application logs
+docker compose logs -f app worker # follow web and file-operation logs
 docker compose down              # stop and remove containers; keep database and encrypted files
 docker compose down -v           # permanently delete both database and encrypted-file volumes
 ```
 
 The app image uses Next.js standalone output and a multi-stage build. Compose waits for PostgreSQL's health check before starting the app. Migrations run from `setup-dev.sh`; they do not run automatically when starting Compose directly.
 
-When upgrading an existing installation, run `corepack pnpm exec prisma migrate deploy` with the database running. The session-policy migration caps existing session expiry at 24 hours after creation without extending earlier expiry times. Sessions already older than 24 hours will require a new sign-in.
+For file-operation upgrades, stop old web/worker processes and protect a matching DB + volume + KEK backup before migration. Follow [FILE_OPERATIONS.md](docs/FILE_OPERATIONS.md) for the exact upgrade, worker and recovery commands. Run `corepack pnpm exec prisma migrate deploy` with the database running before starting the new processes. The session-policy migration caps existing session expiry at 24 hours after creation without extending earlier expiry times. Sessions already older than 24 hours will require a new sign-in.
 
 Checks available after installing dependencies:
 
 ```sh
-corepack pnpm test               # download-header regression tests (Node.js 24)
+corepack pnpm test               # headers, storage, crypto and lease regression tests
+corepack pnpm test:integration   # owns disposable PostgreSQL/FS fault fixtures
+corepack pnpm build:worker       # compile and package the Node.js worker
 corepack pnpm lint
 corepack pnpm build
 ```
@@ -156,6 +162,8 @@ Open the link printed for your email address in the browser. Console messages in
 To send to inboxes, set `EMAIL_PROVIDER=resend`, supply `RESEND_API_KEY`, and configure `EMAIL_FROM` for your Resend sender. Delivery failures reject the send operation and never switch providers automatically. Better Auth handles errors from its email callbacks; the service does not change its authentication responses. Configuration is resolved on first use, so builds do not require email credentials. Restart the application after changing email settings; for Docker, recreate the app container with `docker compose up -d app`.
 
 ## Security & Threat Model
+
+File-operation state, API contracts, retries, migration and operating limits are documented in [FILE_OPERATIONS.md](docs/FILE_OPERATIONS.md), with [acceptance evidence](docs/FILE_OPERATIONS_VERIFICATION.md).
 
 For the security architecture, threat analysis, and planned mitigations, see [THREAT_MODEL.md](docs/THREAT_MODEL.md). The implemented authentication and session policy is described in [AUTHENTICATION_AND_SESSION_MODEL.md](docs/AUTHENTICATION_AND_SESSION_MODEL.md).
 
