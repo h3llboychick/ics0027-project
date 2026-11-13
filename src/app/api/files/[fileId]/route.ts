@@ -8,24 +8,25 @@ import { apiErrorResponse } from "@/lib/http/api-error-response";
 import { createFileDownloadResponse } from "@/lib/http/download-response";
 import { operationRepository } from '@/lib/files/runtime';
 import { publicOperation } from '@/lib/files/operations/model';
+import { securityHandler } from '@/lib/http/security-handler';
 
 type RouteContext = {
     params: Promise<{ fileId: string }>
 }
 
-export async function GET(request: NextRequest, context: RouteContext) {
+async function downloadFile(request: NextRequest, context: RouteContext) {
   let session;
   try {
     session = await requireUser(request);
   } catch (error) {
-    return apiErrorResponse(error, 'GET /api/files/[fileId] authentication failed');
+    return apiErrorResponse(error);
   }
   const { fileId } = await context.params;
   let validatedFileId;
   try {
     validatedFileId = getFileRequestSchema.parse(fileId)
   } catch (err) {
-    return apiErrorResponse(err, 'GET /api/files/[fileId] validation failed');
+    return apiErrorResponse(err);
   }
 
   const fileService = new FileService(prismaFileRepository, diskStorage, operationRepository);
@@ -37,24 +38,24 @@ export async function GET(request: NextRequest, context: RouteContext) {
 
     return createFileDownloadResponse(file);
   } catch (error) {
-    return apiErrorResponse(error, 'GET /api/files/[fileId] download failed');
+    return apiErrorResponse(error);
   }
 }
 
 
-export async function DELETE(request: NextRequest, context: RouteContext) {
+async function deleteFile(request: NextRequest, context: RouteContext) {
   let session;
   try {
     session = await requireUser(request);
   } catch (error) {
-    return apiErrorResponse(error, 'DELETE /api/files/[fileId] authentication failed');
+    return apiErrorResponse(error);
   }
   const { fileId } = await context.params;
   let validatedFileId;
   try {
     validatedFileId = getFileRequestSchema.parse(fileId)
   } catch (err) {
-    return apiErrorResponse(err, 'DELETE /api/files/[fileId] validation failed');
+    return apiErrorResponse(err);
   }
 
   const fileService = new FileService(prismaFileRepository, diskStorage, operationRepository);
@@ -62,7 +63,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
   try {
     deletedFileId = await fileService.deleteFile(session.user.id, validatedFileId);
   } catch (error) {
-    return apiErrorResponse(error, 'DELETE /api/files/[fileId] failed');
+    return apiErrorResponse(error);
   }
 
   if (!deletedFileId) return NextResponse.json({ error: 'FILE_NOT_FOUND' }, { status: 404 });
@@ -71,3 +72,6 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     headers: { 'Cache-Control': 'no-store' },
   });
 }
+
+export const GET = securityHandler('file.download', downloadFile);
+export const DELETE = securityHandler('file.delete', deleteFile);

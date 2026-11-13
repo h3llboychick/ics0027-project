@@ -3,6 +3,7 @@ import { aesGcmFileEncryptor } from '../encryption';
 import type { OperationRepository } from './repository';
 import { OperationLease } from './lease';
 import { AttentionError, candidatesOf, errorCode, LeaseLostError, type Metadata, type Operation } from './model';
+import { securityLog } from '../../security/log';
 
 export function decrypt(metadata: Metadata, ciphertext: Uint8Array<ArrayBuffer>) {
   return aesGcmFileEncryptor.decrypt({
@@ -48,8 +49,7 @@ export class OperationCoordinator {
     // If a commit succeeded or ownership changed, retry() is a no-op via CAS.
     if (error instanceof LeaseLostError) return;
     const code = errorCode(error);
-    console.warn(JSON.stringify({ event: 'file_operation_attempt', operationId: op.id, fileId: op.fileId,
-      attempt: op.attemptCount, phase: op.phase, code }));
+    securityLog('file.operation_attempt', { outcome: 'error', userId: op.ownerId, operationId: op.id, fileId: op.fileId, code });
     try { await this.repository.retry(op, code, error instanceof AttentionError); }
     catch { /* DB outcome/ownership unknown: keep candidates and let the lease expire. */ }
   }
@@ -157,12 +157,12 @@ export class OperationCoordinator {
     try {
       const op = await this.repository.claim();
       if (op) await this.recover(op, shutdown);
-    } catch { console.warn(JSON.stringify({ event: 'file_worker_cycle', code: 'DEPENDENCY_UNAVAILABLE' })); }
+    } catch { securityLog('worker.cycle', { outcome: 'error', code: 'DEPENDENCY_UNAVAILABLE' }); }
     if (shutdown?.aborted) return;
     try {
       const cleanup = await this.repository.claimCleanup();
       if (cleanup) await this.cleanup(cleanup);
       await this.scan();
-    } catch { console.warn(JSON.stringify({ event: 'file_worker_cleanup', code: 'DEPENDENCY_UNAVAILABLE' })); }
+    } catch { securityLog('worker.cleanup', { outcome: 'error', code: 'DEPENDENCY_UNAVAILABLE' }); }
   }
 }

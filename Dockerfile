@@ -34,8 +34,9 @@ COPY --from=builder --chown=node:node /app/public ./public
 COPY --from=builder --chown=node:node /app/.next/standalone ./
 COPY --from=builder --chown=node:node /app/.next/static ./.next/static
 COPY --from=builder --chown=node:node /app/dist/worker ./dist/worker
-RUN mkdir -p /app/storage \
-    && chown node:node /app/storage
+RUN mkdir -p /app/storage /app/.mail-outbox \
+    && chown node:node /app/storage /app/.mail-outbox \
+    && chmod 700 /app/.mail-outbox
 
 USER node
 EXPOSE 3000

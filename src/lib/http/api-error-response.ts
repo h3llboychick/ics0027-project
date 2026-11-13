@@ -2,9 +2,15 @@ import { NextResponse } from "next/server";
 import { UnauthenticatedError } from "@/lib/auth-guard";
 import { FileOperationError } from "@/lib/files/errors";
 import { ZodError } from "zod";
+import { CsrfError } from '@/lib/security/csrf';
+import { auditError } from '@/lib/security/log';
 
 /** Translate application errors into the API's public error shape. */
-export function apiErrorResponse(error: unknown, context: string): NextResponse {
+export function apiErrorResponse(error: unknown): NextResponse {
+  if (error instanceof CsrfError) {
+    auditError('CSRF_REJECTED');
+    return NextResponse.json({ error: 'CSRF_REJECTED' }, { status: 403 });
+  }
   if (error instanceof UnauthenticatedError) {
     return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
   }
@@ -14,13 +20,13 @@ export function apiErrorResponse(error: unknown, context: string): NextResponse 
   }
 
   if (error instanceof FileOperationError) {
-    console.error(JSON.stringify({ context, code: error.code }));
-    return NextResponse.json({ error: error.code }, { status: 500 });
+    auditError(error.code);
+    return NextResponse.json({ error: 'INTERNAL_SERVER_ERROR' }, { status: 500 });
   }
 
   if (error instanceof Error && error.name === 'AbortError') {
     return NextResponse.json({ error: 'REQUEST_CANCELLED' }, { status: 408 });
   }
-  console.error(JSON.stringify({ context, code: 'DEPENDENCY_UNAVAILABLE' }));
+  auditError('DEPENDENCY_UNAVAILABLE');
   return NextResponse.json({ error: "INTERNAL_SERVER_ERROR" }, { status: 500 });
 }

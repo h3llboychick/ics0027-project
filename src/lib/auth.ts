@@ -3,9 +3,15 @@ import { prismaAdapter } from "better-auth/adapters/prisma";
 import { prisma } from "./prisma";
 import { hash, verify } from "@/lib/password_hashing";
 import { EMAIL_LINK_EXPIRES_IN_SECONDS, sendVerificationEmail, sendResetPassword } from "./email";
+import { securityLog } from './security/log';
 
 export const auth = betterAuth({
   appName: "SecureFileManager",
+  logger: {
+    level: 'warn',
+    // Library messages can contain attacker-controlled URLs and error details.
+    log: () => securityLog('auth.internal', { outcome: 'error', code: 'AUTH_LIBRARY_ERROR' }),
+  },
   database: prismaAdapter(prisma, {
     provider: "postgresql",
   }),

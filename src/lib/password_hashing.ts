@@ -1,4 +1,5 @@
 import * as argon2 from "argon2";
+import { securityLog } from './security/log';
 
 export const PASSWORD_HASHING_OPTIONS : argon2.HashOptions = {
     type: argon2.argon2id,
@@ -14,8 +15,8 @@ export async function hash( password: string) {
 export async function verify({ hash, password } : { hash: string, password: string }) {
     try {
         return argon2.verify(hash, password, PASSWORD_HASHING_OPTIONS);
-    } catch (err) {
-        console.error("error while verifying hash", err) ;
+    } catch {
+        securityLog('auth.password_verification', { outcome: 'error', code: 'HASH_VERIFICATION_FAILED' });
         return false; // fail safe - if something goes wrong on our side it's better to deny authentication rather than allow it
     }
 }

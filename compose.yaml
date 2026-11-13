@@ -22,6 +22,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
+      TRUST_PROXY_HEADERS: "true"
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:-https://secure-file-manager.dev:8443}
       DATABASE_URL: postgresql://${POSTGRES_USER:-storage}:${POSTGRES_PASSWORD:-storage_dev_password}@db:5432/${POSTGRES_DB:-storage}
     depends_on:
@@ -29,6 +30,7 @@ services:
         condition: service_healthy
     volumes:
       - encrypted_files:/app/storage
+      - local_mail:/app/.mail-outbox
 
   worker:
     image: ics0027-file-manager:local
@@ -69,3 +71,4 @@ services:
 volumes:
   postgres_data:
   encrypted_files:
+  local_mail:

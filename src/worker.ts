@@ -2,6 +2,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { prisma } from './lib/prisma';
 import { fileOperationConfig, operationCoordinator, operationRepository, validateFileRuntime } from './lib/files/runtime';
 import { diskStorage } from './lib/files/storage/disk-storage';
+import { securityLog } from './lib/security/log';
 
 validateFileRuntime();
 const shutdown = new AbortController();
@@ -20,16 +21,16 @@ try {
   if (process.argv[2] === '--inspect-legacy') {
     for await (const fileId of diskStorage.legacyKeys()) {
       if (!await operationRepository.storageReferenced(fileId)) {
-        console.info(JSON.stringify({ event: 'legacy_blob_unreferenced', fileId }));
+        securityLog('worker.legacy_blob_unreferenced', { outcome: 'success', fileId });
       }
     }
   } else if (process.argv[2] === '--retry') {
     const id = process.argv[3];
     if (!id || !/^[\da-f-]{36}$/i.test(id)) throw new Error('Pass an operation UUID');
     const result = await operationRepository.requeue(id);
-    console.info(JSON.stringify({ event: 'operation_requeued', operationId: result.id }));
+    securityLog('worker.operation_requeued', { outcome: 'success', operationId: result.id, userId: result.ownerId });
   } else {
-    console.info(JSON.stringify({ event: 'file_worker_started' }));
+    securityLog('worker.started', { outcome: 'success' });
     while (!shutdown.signal.aborted) {
       await operationCoordinator.tick(shutdown.signal);
       try { await delay(fileOperationConfig.pollMs, undefined, { signal: shutdown.signal }); }
@@ -37,7 +38,7 @@ try {
     }
   }
 } catch {
-  console.error(JSON.stringify({ event: 'file_worker_failed', code: 'CONFIGURATION_OR_DATABASE_ERROR' }));
+  securityLog('worker.failed', { outcome: 'error', code: 'CONFIGURATION_OR_DATABASE_ERROR' });
   process.exitCode = 1;
 } finally {
   await operationCoordinator.close();

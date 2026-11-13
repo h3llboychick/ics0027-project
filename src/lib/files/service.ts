@@ -7,6 +7,7 @@ import { OperationRepository } from './operations/repository';
 import { OperationCoordinator } from './operations/coordinator';
 import { publicOperation, type Operation } from './operations/model';
 import { idempotencyKeySchema, uploadFileRequestSchema } from '../contracts/files';
+import { securityLog } from '../security/log';
 
 export class FileService {
   constructor(private readonly repository: FileRepository, private readonly storage: FileStorage,
@@ -61,7 +62,7 @@ export class FileService {
     if (!metadata) return undefined;
     const ciphertext = metadata.storageKey ? await this.storage.get(metadata.storageKey, AbortSignal.timeout(this.operations.config.ioTimeoutMs)) : null;
     if (!ciphertext) {
-      console.warn(JSON.stringify({ event: 'ready_blob_missing', fileId }));
+      securityLog('file.content_missing', { outcome: 'error', userId: ownerId, fileId });
       throw new FileStorageError('Stored content is unavailable');
     }
     const plaintext = aesGcmFileEncryptor.decrypt({

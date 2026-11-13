@@ -9,6 +9,9 @@ export function createFileDownloadResponse(file: File): Response {
   return new Response(file, {
     headers: {
       "Content-Type": "application/octet-stream",
+      "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff",
+      "Content-Security-Policy": "default-src 'none'; sandbox",
       "Content-Disposition": `attachment; filename="${fallback}"; filename*=UTF-8''${encodedFilename}`,
     },
   });

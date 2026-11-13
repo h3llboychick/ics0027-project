@@ -4,13 +4,16 @@ import { operationLookupSchema } from '@/lib/contracts/files';
 import { operationRepository } from '@/lib/files/runtime';
 import { publicOperation } from '@/lib/files/operations/model';
 import { apiErrorResponse } from '@/lib/http/api-error-response';
+import { securityHandler } from '@/lib/http/security-handler';
 
-export async function GET(request: NextRequest) {
+async function lookupOperation(request: NextRequest) {
   try {
     const { user } = await requireUser(request);
     const input = operationLookupSchema.parse(Object.fromEntries(request.nextUrl.searchParams));
     const operation = await operationRepository.findByKey(user.id, input.type, input.idempotencyKey);
     return NextResponse.json(operation ? publicOperation(operation) : { error: 'OPERATION_NOT_FOUND' },
       { status: operation ? 200 : 404, headers: { 'Cache-Control': 'no-store' } });
-  } catch (error) { return apiErrorResponse(error, 'GET /api/file-operations'); }
+  } catch (error) { return apiErrorResponse(error); }
 }
+
+export const GET = securityHandler('file.operation_lookup', lookupOperation);

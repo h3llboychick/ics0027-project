@@ -7,14 +7,15 @@ import { prismaFileRepository } from "@/lib/files/repository/prisma-file-reposit
 import * as z from 'zod'
 import { apiErrorResponse } from "@/lib/http/api-error-response";
 import { operationRepository } from '@/lib/files/runtime';
+import { securityHandler } from '@/lib/http/security-handler';
 
 
-export async function GET(request: NextRequest) {
+async function listFiles(request: NextRequest) {
   let session;
   try {
     session = await requireUser(request);
   } catch (error) {
-    return apiErrorResponse(error, 'GET /api/files authentication failed');
+    return apiErrorResponse(error);
   }
   
   let listFilesRequest;
@@ -34,24 +35,24 @@ export async function GET(request: NextRequest) {
     const filesPage = await fileService.listForOwner(session.user.id, listFilesRequest.page, listFilesRequest.pageSize);
     return NextResponse.json(filesPage, { status: 200 });
   } catch (error) {
-    return apiErrorResponse(error, 'GET /api/files listing failed');
+    return apiErrorResponse(error);
   }  
 }
 
 
-export async function POST(request: NextRequest) {
+async function uploadFile(request: NextRequest) {
   let session;
   try {
     session = await requireUser(request);
   } catch (error) {
-    return apiErrorResponse(error, 'POST /api/files authentication failed');
+    return apiErrorResponse(error);
   }
 
   let key: string;
   try {
     request.signal.throwIfAborted();
     key = idempotencyKeySchema.parse(request.headers.get('Idempotency-Key'));
-  } catch (error) { return apiErrorResponse(error, 'POST /api/files validation failed'); }
+  } catch (error) { return apiErrorResponse(error); }
   let formData: FormData;
   try {
     formData = await request.formData();
@@ -64,7 +65,7 @@ export async function POST(request: NextRequest) {
   try {
     validatedFile = uploadFileRequestSchema.parse(formData.get("file"))
   } catch (err) {
-    return apiErrorResponse(err, 'POST /api/files validation failed');
+    return apiErrorResponse(err);
   }
 
   // Service called
@@ -73,6 +74,9 @@ export async function POST(request: NextRequest) {
     const result = await fileService.uploadFile(session.user.id, validatedFile, key, request.signal);
     return NextResponse.json(result.body, { status: result.status, headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
-    return apiErrorResponse(error, 'POST /api/files upload failed');
+    return apiErrorResponse(error);
   }
 }
+
+export const GET = securityHandler('file.list', listFiles);
+export const POST = securityHandler('file.upload', uploadFile);

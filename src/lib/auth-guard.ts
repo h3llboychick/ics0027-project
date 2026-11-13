@@ -1,4 +1,5 @@
 import { auth } from '@/lib/auth';
+import { auditUser } from './security/log';
 
 export class UnauthenticatedError extends Error {
   constructor() {
@@ -16,5 +17,6 @@ export async function requireUser(request: Request) {
     throw new UnauthenticatedError();
   }
 
+  auditUser(session.user.id);
   return session;
 }

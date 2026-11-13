@@ -11,8 +11,7 @@
     "worker": "node --env-file=.env dist/worker/worker.js",
     "test": "node --import ./tests/register.mjs --test tests/*.test.mjs",
     "test:integration": "pnpm build:worker && node scripts/test-file-operations.mjs",
-    "lint": "eslint",
-    "test:compose": "node scripts/test-file-compose.mjs"
+    "lint": "eslint"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",

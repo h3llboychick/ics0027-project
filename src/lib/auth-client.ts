@@ -1,2 +1,3 @@
 import { createAuthClient } from "better-auth/react"
-export const authClient = createAuthClient()
+import { csrfFetch } from './security/csrf-client';
+export const authClient = createAuthClient({ fetchOptions: { customFetchImpl: csrfFetch } })

@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/card";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { csrfFetch } from '@/lib/security/csrf-client';
 
 type UploadedFile = {
   id: string;
@@ -111,7 +112,7 @@ export function FileTransfer() {
     try {
       const formData = new FormData();
       if (item.file) formData.set("file", item.file);
-      const response = await fetch(item.type === "UPLOAD" ? "/api/files" : `/api/files/${item.fileId}`, {
+      const response = await csrfFetch(item.type === "UPLOAD" ? "/api/files" : `/api/files/${item.fileId}`, {
         method: item.type === "UPLOAD" ? "POST" : "DELETE",
         headers: item.type === "UPLOAD" ? { "Idempotency-Key": item.key } : undefined,
         body: item.type === "UPLOAD" ? formData : undefined,
