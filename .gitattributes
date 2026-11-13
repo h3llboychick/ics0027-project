@@ -4,3 +4,6 @@ src/prisma/ops.json linguist-generated
 src/prisma/migration.json linguist-generated
 migrations/snapshots/**/contract.json linguist-generated
 migrations/snapshots/**/contract.d.ts linguist-generated
+
+# PDF reports must not receive text diffs or line-ending conversion.
+*.pdf binary

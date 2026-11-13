@@ -355,7 +355,7 @@ printf '\nBuilding and starting web, worker, and nginx...\n'
 (cd "$ROOT_DIR" && docker compose up --build -d app worker nginx)
 
 if [[ "$(read_env EMAIL_PROVIDER)" == console ]]; then
-  printf '\nEmail verification and password-reset messages are printed to application logs.\n'
+  printf '\nLocal email is saved privately; read it with: docker compose exec app sh -c '\''cat .mail-outbox/*.txt'\''\n'
 fi
 
 printf '\nSetup is complete. Secret values were not printed.\n'

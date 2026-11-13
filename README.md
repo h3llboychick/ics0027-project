@@ -30,20 +30,20 @@ Docker Compose simplifies deployment by defining and orchestrating all services 
 - Registration and login using email and password
 - Required email verification and password reset through Better Auth
 - Styled HTML and plain-text emails, with the application's lock logo in HTML messages
-- Email delivery through Resend or application logs, selected with environment variables
+- Email delivery through Resend or a private local mailbox, selected with environment variables
 - Opaque, cookie-based sessions managed by Better Auth, with a fixed 24-hour lifetime and Secure, HttpOnly, SameSite=Strict cookies
 - Uploading files over TLS and encrypting them before they are written to storage
-- Listing and paginating only the authenticated user's files
+- Listing, searching and paginating only the authenticated user's files
 - Downloading and decrypting files after a server-side ownership check
 - Durable, idempotent uploads and asynchronous deletion with operation receipts and a recovery worker
-- Backend validation of filenames and a 25 MiB per-file upload limit; nginx applies a separate request-body limit
+- Validated TXT, CSV, JSON, PDF, PNG and JPEG uploads with a 25 MiB file limit and bounded request parsing
+- Per-user storage quotas (100 MiB by default), reserved transactionally across concurrent uploads
+- Signed CSRF tokens and exact-origin checks on every authentication and file mutation
+- Nonce-based Content Security Policy, React output escaping and safe attachment downloads
+- A public `/api/health` liveness endpoint
+- Structured security logs with request IDs and no passwords, account-access tokens, encryption keys or file contents
 
-Planned features:
-
-- Filename search
-- Per-user storage quotas
-- A public `/api/health` endpoint
-- Structured security logging without passwords, session tokens, encryption keys, or file contents
+Checkpoint 3 implementation details are in [SECURITY_CONTROLS.md](docs/SECURITY_CONTROLS.md). Read the [draft report (PDF)](output/pdf/checkpoint3-report-draft.pdf), its [editable source](docs/REPORT_DRAFT.md), and the short progress notice in [checkpoint3.txt](checkpoint3.txt).
 
 ## Routes
 
@@ -62,12 +62,16 @@ Planned features:
 
 | Method | Route | Access | Purpose |
 | --- | --- | --- | --- |
-| `GET` | `/api/files` | Authenticated | Lists the current user's file metadata. Supports `page` (default `1`) and `pageSize` (`10`, `20`, or `40`; default `10`). |
+| `GET` | `/api/health` | Public | Liveness only; returns `{"status":"ok"}` without configuration details. |
+| `GET` | `/api/csrf` | Public, same-origin browser | Issues a signed CSRF token and Secure host-only cookie. |
+| `GET` | `/api/files` | Authenticated | Lists the current user's file metadata. Supports `page` (default `1`), `pageSize` (`10`, `20`, or `40`; default `10`) and a `search` filename substring (max 100 characters). Includes storage usage/reservations and quota. |
 | `POST` | `/api/files` | Authenticated | Uploads a file using `multipart/form-data`. Requires a stable `Idempotency-Key`; returns 201 only after READY, or 202 for durable pending work. |
 | `GET` | `/api/file-operations/{id}` | Authenticated owner | Returns an operation status without keys or storage paths. |
 | `GET` | `/api/file-operations?type=UPLOAD&idempotencyKey=...` | Authenticated | Resolves an upload after a lost response. |
 | `GET` | `/api/files/{id}` | Authenticated owner | Checks ownership, decrypts the requested file, and returns it as a download. |
 | `DELETE` | `/api/files/{id}` | Authenticated owner | Durably accepts deletion (202), hides the file, and lets the worker remove content and complete its receipt. |
+
+Every POST/DELETE request, including authentication forms, requires `Origin` matching `BETTER_AUTH_URL`, the CSRF cookie and an `X-CSRF-Token` header obtained from `/api/csrf`. The browser clients attach the token automatically. Command-line clients must preserve cookies and provide these headers.
 
 Every file endpoint validates the session on the server. Routes containing `{id}` use an opaque, server-generated file identifier and verify that the file's `ownedBy` field matches the authenticated user's ID.
 
@@ -91,7 +95,7 @@ The catch-all handler may expose additional Better Auth framework endpoints, but
 
 ## Running the Application with Docker
 
-Docker Compose runs the Next.js app, one file recovery worker, PostgreSQL, and an nginx TLS reverse proxy. The database and encrypted files are kept in named volumes. You need Docker with the Compose plugin, Node.js 24 with Corepack, and OpenSSL.
+Docker Compose runs the Next.js app, one file recovery worker, PostgreSQL, and an nginx TLS reverse proxy. The database, encrypted files and local development mailbox are kept in named volumes. You need Docker with the Compose plugin, Node.js 24 with Corepack, and OpenSSL.
 
 Run the full setup from the repository root:
 
@@ -99,7 +103,7 @@ Run the full setup from the repository root:
 ./scripts/setup-dev.sh
 ```
 
-The script asks for the PostgreSQL database/user, Better Auth secret, PostgreSQL password, file-encryption KEK, and email provider. On a fresh setup, leave the Better Auth secret, PostgreSQL password, and KEK blank to generate random values. Existing values are kept when you press Enter. The default email provider is `console`, which supports verification and password reset without an email-service account. Choosing `resend` prompts for a required Resend API key.
+The script asks for the PostgreSQL database/user, Better Auth secret, PostgreSQL password, file-encryption KEK, and email provider. On a fresh setup, leave the Better Auth secret, PostgreSQL password, and KEK blank to generate random values. Existing values are kept when you press Enter. The default email provider is `console`, which saves verification and password-reset messages to a private local mailbox without an email-service account. Choosing `resend` prompts for a required Resend API key.
 
 The script installs dependencies with Corepack/pnpm, generates the Prisma client and TLS certificates, starts PostgreSQL, applies database migrations, then builds and starts web, worker, and nginx. It keeps `.env` and private keys out of Git. It does not change your hosts file or OS/browser trust store, so add this entry if needed and trust the local CA certificate:
 
@@ -116,7 +120,7 @@ Useful commands:
 ```sh
 docker compose logs -f app worker # follow web and file-operation logs
 docker compose down              # stop and remove containers; keep database and encrypted files
-docker compose down -v           # permanently delete both database and encrypted-file volumes
+docker compose down -v           # permanently delete database, encrypted-file and local-mail volumes
 ```
 
 The app image uses Next.js standalone output and a multi-stage build. Compose waits for PostgreSQL's health check before starting the app. Migrations run from `setup-dev.sh`; they do not run automatically when starting Compose directly.
@@ -126,8 +130,9 @@ For file-operation upgrades, stop old web/worker processes and protect a matchin
 Checks available after installing dependencies:
 
 ```sh
-corepack pnpm test               # headers, storage, crypto and lease regression tests
+corepack pnpm test               # download headers, storage, crypto and leases
 corepack pnpm test:integration   # owns disposable PostgreSQL/FS fault fixtures
+corepack pnpm audit --prod       # production dependency advisories
 corepack pnpm build:worker       # compile and package the Node.js worker
 corepack pnpm lint
 corepack pnpm build
@@ -147,26 +152,26 @@ Email delivery is configured in `.env`; see `.env.example` for all settings:
 
 | Variable | Purpose |
 | --- | --- |
-| `EMAIL_PROVIDER` | `console` prints messages to server logs; `resend` delivers through Resend. Defaults to `console` when unset. Unsupported or empty values cause an error when email is used. |
+| `EMAIL_PROVIDER` | `console` saves private `.mail-outbox/*.txt` messages and logs delivery metadata; `resend` delivers through Resend. Defaults to `console` when unset. Unsupported or empty values cause an error when email is used. |
 | `EMAIL_FROM` | Sender name and address. Defaults to `SecureFileManager <onboarding@resend.dev>`. For real Resend recipients, configure a sender on your verified domain. |
 | `RESEND_API_KEY` | Required only for the `resend` provider. |
 
-For local development or a demonstration, set `EMAIL_PROVIDER=console`. No email-service account or API key is required. Register an account or request a password reset, then follow the application logs:
+For local development or a demonstration, set `EMAIL_PROVIDER=console`. No email-service account or API key is required. Register or request a password reset, then read the private development inbox:
 
 ```sh
-docker compose logs -f app
+docker compose exec app sh -c 'cat .mail-outbox/*.txt'
 ```
 
-Open the link printed for your email address in the browser. Console messages include the sender, recipient, subject, and plain-text body. These links grant account access, so keep the logs private. Provider selection is independent of `NODE_ENV`, so console delivery also works with the production build used by Docker.
+Open the link for your email address. Messages contain account-access links, so keep the inbox private. Compose stores it in the `local_mail` volume. Without Docker the default is `.mail-outbox/`; `EMAIL_OUTBOX_DIRECTORY` overrides that path. Files use mode 0600 and the directory is created with mode 0700. The mailbox is excluded from Git and Docker builds. Application and nginx access logs omit these links. Choosing `console` is explicit local delivery; it is not a fallback for failed Resend delivery.
 
 To send to inboxes, set `EMAIL_PROVIDER=resend`, supply `RESEND_API_KEY`, and configure `EMAIL_FROM` for your Resend sender. Delivery failures reject the send operation and never switch providers automatically. Better Auth handles errors from its email callbacks; the service does not change its authentication responses. Configuration is resolved on first use, so builds do not require email credentials. Restart the application after changing email settings; for Docker, recreate the app container with `docker compose up -d app`.
 
 ## Security & Threat Model
 
-File-operation state, API contracts, retries, migration and operating limits are documented in [FILE_OPERATIONS.md](docs/FILE_OPERATIONS.md), with [acceptance evidence](docs/FILE_OPERATIONS_VERIFICATION.md).
+File-operation state, API contracts, retries, migration and operating limits are documented in [FILE_OPERATIONS.md](docs/FILE_OPERATIONS.md). The [draft report](output/pdf/checkpoint3-report-draft.pdf) summarizes the security checks and their observed results.
 
-For the security architecture, threat analysis, and planned mitigations, see [THREAT_MODEL.md](docs/THREAT_MODEL.md). The implemented authentication and session policy is described in [AUTHENTICATION_AND_SESSION_MODEL.md](docs/AUTHENTICATION_AND_SESSION_MODEL.md).
+For the original security architecture, threat analysis, and planned mitigations, see [THREAT_MODEL.md](docs/THREAT_MODEL.md). The implemented authentication and session policy is described in [AUTHENTICATION_AND_SESSION_MODEL.md](docs/AUTHENTICATION_AND_SESSION_MODEL.md).
 
 ---
 
-> **Authorship note:** I wrote the content of this document. AI assistance was used to improve its wording and structure.
+> **Assistance note:** AI assistance was used for the checkpoint 3 implementation, testing and documentation.

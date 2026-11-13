@@ -1,0 +1,40 @@
+Secure Web-Based File Encryption and Management System
+Checkpoint 3, near-final state (Week 12)
+
+Deliverables. Feature-complete application, security test evidence, and a draft of the
+report.
+
+• CSRF protection implemented on all state-changing forms, and verified with a
+demonstration attempt.
+
+• XSS defences in place.
+
+• Input validation and secure file handling completed.
+
+• SQL injection prevented via prepared and parameterized statements throughout.
+
+• Per-user access control enforced on every file operation, verified by attempting to
+access another user's file.
+
+• Secure error handling and structured logging.
+
+• Security test cases with results, including the sample attack vectors attempted and
+how each was mitigated.
+
+• Draft report covering the Introduction, Implementation, Security Analysis and
+Conclusion, as described in Section 1.3 in project pdf.
+
+Progress note - 15 November 2026
+
+The checkpoint 3 implementation is complete. Authentication and file mutations
+use signed CSRF tokens and origin checks. The application includes a nonce-based
+Content Security Policy, validated uploads, owner-scoped file operations,
+parameterized database queries, generic errors and structured security logs.
+Filename search, storage quotas and a public health endpoint are also available.
+
+Development checks covered forged requests, XSS and SQL payloads, cross-user
+file access, ciphertext tampering and session revocation. The draft report is
+available at output/pdf/checkpoint3-report-draft.pdf and covers Introduction,
+Implementation, Security Analysis and Conclusion. Remaining work includes
+checking the report against the course's complete formatting instructions and
+addressing the documented operational and development-tool limitations.
