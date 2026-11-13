@@ -6,3 +6,6 @@ allowBuilds:
   sharp: false
   unrs-resolver: false
   workerd: false
+overrides:
+  mysql2: 3.24.6
+  source-map-js: 1.2.2
