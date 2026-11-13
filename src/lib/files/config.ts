@@ -9,6 +9,7 @@ export function readFileOperationConfig(env = process.env) {
     return Number(value);
   }
   const config = {
+    userQuotaBytes: integer('FILE_USER_QUOTA_BYTES', 100 * 1024 * 1024, 1, 10 * 1024 * 1024 * 1024),
     leaseMs: integer('FILE_LEASE_MS', 60_000),
     heartbeatMs: integer('FILE_HEARTBEAT_MS', 15_000),
     pollMs: integer('FILE_WORKER_POLL_MS', 5_000),

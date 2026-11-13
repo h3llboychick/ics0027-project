@@ -36,6 +36,6 @@ export type FileListings = {
 export interface FileRepository {
     findById(id: string, ownerId: string): Promise<FileMetadata | null>;
     getFileEncryptionMetadata(id: string, ownerId: string): Promise<FileEncryptionMetadata | null>;
-    listByOwner(ownerId: string, page: number, pageSize: number): Promise<FileListings>
+    listByOwner(ownerId: string, page: number, pageSize: number, search?: string): Promise<FileListings>
 }
 

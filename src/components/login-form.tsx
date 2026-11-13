@@ -81,8 +81,7 @@ export function LoginForm({
         })
         return;
       }
-    } catch (e) {
-      console.log("unexpected error occured", e);
+    } catch {
       const id = toast.add({
           type: "error",
           title: "Unexpected error",

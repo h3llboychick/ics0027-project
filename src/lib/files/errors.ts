@@ -5,6 +5,12 @@ export type FileErrorCode =
   | "FILE_UPLOAD_FAILED"
   | "FILE_UPLOAD_ROLLBACK_FAILED";
 
+export class FilePolicyError extends Error {
+  constructor(readonly code: 'REQUEST_TOO_LARGE' | 'INVALID_FILE_CONTENT' | 'STORAGE_QUOTA_EXCEEDED', readonly status: 413 | 422 | 409) {
+    super(code);
+  }
+}
+
 /** Errors from file operations that are safe to translate at an HTTP boundary. */
 export class FileOperationError extends Error {
   constructor(

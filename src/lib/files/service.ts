@@ -8,13 +8,17 @@ import { OperationCoordinator } from './operations/coordinator';
 import { publicOperation, type Operation } from './operations/model';
 import { idempotencyKeySchema, uploadFileRequestSchema } from '../contracts/files';
 import { securityLog } from '../security/log';
+import { validateFileContent } from './validation';
 
 export class FileService {
   constructor(private readonly repository: FileRepository, private readonly storage: FileStorage,
     readonly operations: OperationRepository) {}
 
-  listForOwner(ownerId: string, page: number, pageSize: number) {
-    return this.repository.listByOwner(ownerId, page, pageSize);
+  async listForOwner(ownerId: string, page: number, pageSize: number, search = '') {
+    const [listing, storage] = await Promise.all([
+      this.repository.listByOwner(ownerId, page, pageSize, search), this.operations.usage(ownerId),
+    ]);
+    return { ...listing, storage };
   }
 
   async uploadFile(ownerId: string, file: File, key: string, signal?: AbortSignal) {
@@ -26,6 +30,7 @@ export class FileService {
     const fingerprint = createHash('sha256').update(JSON.stringify([file.name, file.size])).update(bytes).digest('hex');
     let encrypted;
     try {
+      validateFileContent(file.name, bytes);
       const existing = await this.operations.findByKey(ownerId, 'UPLOAD', key);
       if (existing) return this.uploadResult(existing, fingerprint, true);
       encrypted = aesGcmFileEncryptor.encrypt(bytes);

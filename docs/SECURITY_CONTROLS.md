@@ -42,3 +42,34 @@ the local path when running without Compose.
 
 References: [Next.js CSP](https://nextjs.org/docs/app/guides/content-security-policy),
 [Better Auth security](https://better-auth.com/docs/reference/security).
+
+## File and resource policy
+
+New uploads accept TXT, CSV, JSON, PDF, PNG and JPEG extensions only. Filenames
+are bounded to 255 characters; path separators, colons, control characters and
+blank names are rejected. Text must be valid UTF-8 without NULs. PDF, PNG and JPEG
+content must have the corresponding signature; MIME headers are not trusted.
+This is a format policy, not antivirus scanning or a complete format decoder.
+Files are never interpreted, previewed or extracted. Existing files remain
+downloadable, even if their types are no longer accepted for new uploads.
+
+The backend validates the 25 MiB file limit and counts actual request bytes up to
+25 MiB + 64 KiB of multipart overhead before parsing. Nginx also limits requests
+to 26 MiB. Authentication bodies are limited to 16 KiB; names and email addresses
+are bounded before Better Auth's endpoint validation. File listing accepts page
+sizes 10/20/40, a page bounded to one million, and a 100-character search term.
+Search uses case-insensitive, literal filename substrings within the current
+owner's READY files. Prisma query APIs and tagged raw SQL parameterize all data.
+
+`FILE_USER_QUOTA_BYTES` defaults to 104857600 (100 MiB). Reservation locks the
+owner's database row and checks aggregate usage in the same transaction, across
+all web processes. Pending uploads and deleting files count; failed uploads
+count until their cleanup receipt is DONE. Cleanup/deletion releases their
+reservation. Retrying the same accepted idempotency key does not reserve again.
+The UI shows usage and reservations independently of its current filename
+filter. The quota bounds logical file bytes, not metadata, receipts, recovery
+copies, mail or backups. Uploads/downloads are bounded but currently buffered in
+memory; deployment-wide concurrency and volume monitoring remain necessary.
+
+`GET /api/health` is public liveness only and returns `{"status":"ok"}`. It makes
+no dependency-readiness claim and reveals no database or key configuration.

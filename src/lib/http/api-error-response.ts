@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { UnauthenticatedError } from "@/lib/auth-guard";
-import { FileOperationError } from "@/lib/files/errors";
+import { FileOperationError, FilePolicyError } from "@/lib/files/errors";
 import { ZodError } from "zod";
 import { CsrfError } from '@/lib/security/csrf';
 import { auditError } from '@/lib/security/log';
@@ -10,6 +10,10 @@ export function apiErrorResponse(error: unknown): NextResponse {
   if (error instanceof CsrfError) {
     auditError('CSRF_REJECTED');
     return NextResponse.json({ error: 'CSRF_REJECTED' }, { status: 403 });
+  }
+  if (error instanceof FilePolicyError) {
+    auditError(error.code);
+    return NextResponse.json({ error: error.code }, { status: error.status });
   }
   if (error instanceof UnauthenticatedError) {
     return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });

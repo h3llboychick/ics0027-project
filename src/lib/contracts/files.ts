@@ -2,6 +2,8 @@ import * as z from "zod"
 
 export const MAX_FILENAME_LENGTH = 255;
 export const MAX_UPLOAD_SIZE = 1024 * 1024 * 25; // 25MB
+export const ALLOWED_FILE_EXTENSIONS = ['txt', 'csv', 'json', 'pdf', 'png', 'jpg', 'jpeg'] as const;
+export const FILE_ACCEPT = ALLOWED_FILE_EXTENSIONS.map(extension => `.${extension}`).join(',');
 export const SUPPORTED_PAGE_SIZES = [10, 20, 40];
 export const DEFAULT_PAGE_SIZE = 10;
 export const FILE_OPERATION_POLL_MS = z.coerce.number().int().min(100).max(60_000)
@@ -48,11 +50,15 @@ export const uploadFileRequestSchema = z
     .refine(
         (file) => filenameSchema.safeParse(file.name).success,
         { path: ["name"], message: "Filename is invalid" },
-    );
+    )
+    .refine(file => !/[\\/:]/u.test(file.name), 'Filename cannot contain path separators')
+    .refine(file => ALLOWED_FILE_EXTENSIONS.some(extension => file.name.toLowerCase().endsWith(`.${extension}`)),
+        'Supported file types: TXT, CSV, JSON, PDF, PNG and JPEG');
     
 export const listFilesRequestSchema = z.object({
-    page: z.coerce.number().int().positive().optional().default(1),
-    pageSize: z.coerce.number().int().optional().default(DEFAULT_PAGE_SIZE)
+    page: z.coerce.number().int().positive().max(1_000_000).optional().default(1),
+    pageSize: z.coerce.number().int().optional().default(DEFAULT_PAGE_SIZE),
+    search: z.string().trim().max(100).refine(value => !controlCharacters.test(value)).optional().default(''),
 }).refine(({pageSize}) => {
     return SUPPORTED_PAGE_SIZES.includes(pageSize);
 }, `Unsupported page size. Supported values: ${SUPPORTED_PAGE_SIZES}`)
@@ -60,7 +66,8 @@ export const listFilesRequestSchema = z.object({
 export const listFilesResponseSchema = z.object({
     files: z.array(fileListing),
     page: z.number(),
-    hasMorePages:  z.boolean()
+    hasMorePages:  z.boolean(),
+    storage: z.object({ usedBytes: z.number().nonnegative(), limitBytes: z.number().positive() }),
 })
 
 export const getFileRequestSchema = z.uuid()

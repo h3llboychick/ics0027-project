@@ -9,6 +9,8 @@ import {
   type FileOperationResponse,
   listFilesResponseSchema,
   SUPPORTED_PAGE_SIZES,
+  FILE_ACCEPT,
+  uploadFileRequestSchema,
 } from "@/lib/contracts/files";
 import { Button } from "@/components/ui/button";
 import {
@@ -53,8 +55,8 @@ function formatBytes(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-async function fetchFilePage(page: number, pageSize: number, signal: AbortSignal) {
-  const query = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+async function fetchFilePage(page: number, pageSize: number, search: string, signal: AbortSignal) {
+  const query = new URLSearchParams({ page: String(page), pageSize: String(pageSize), search });
   const response = await fetch(`/api/files?${query}`, { cache: "no-store", signal });
   if (!response.ok) throw new Error(`Could not load files (${response.status})`);
   return listFilesResponseSchema.parse(await response.json());
@@ -76,6 +78,9 @@ export function FileTransfer() {
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [loadingFiles, setLoadingFiles] = useState(true);
   const [hasMorePages, setHasMorePages] = useState(false);
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
+  const [storage, setStorage] = useState<{ usedBytes: number; limitBytes: number } | null>(null);
 
 
   const loadFiles = useCallback((page: number) => {
@@ -83,12 +88,13 @@ export function FileTransfer() {
     const controller = new AbortController();
     listingRequestRef.current = controller;
 
-    return fetchFilePage(page, pageSize, controller.signal)
+    return fetchFilePage(page, pageSize, search, controller.signal)
       .then((result) => {
         if (controller.signal.aborted) return;
         setUploadedFiles(result.files);
         setCurrentPage(result.page);
         setHasMorePages(result.hasMorePages);
+        setStorage(result.storage);
       })
       .catch((cause: unknown) => {
         if (controller.signal.aborted) return;
@@ -97,7 +103,7 @@ export function FileTransfer() {
       .finally(() => {
         if (!controller.signal.aborted) setLoadingFiles(false);
       });
-  }, [pageSize, setUploadedFiles, setCurrentPage, setHasMorePages, setError, setLoadingFiles]);
+  }, [pageSize, search, setUploadedFiles, setCurrentPage, setHasMorePages, setError, setLoadingFiles]);
 
   async function refreshFiles(page: number) {
     setLoadingFiles(true);
@@ -125,7 +131,8 @@ export function FileTransfer() {
         setError("Please sign in before managing files.");
         return;
       }
-      const parsed = fileOperationResponseSchema.safeParse(await response.json());
+      const body = await response.json();
+      const parsed = fileOperationResponseSchema.safeParse(body);
       if (controller.signal.aborted) return;
       if (parsed.success && parsed.data.error !== "IDEMPOTENCY_CONFLICT" && (response.ok || response.status === 409)) {
         const operation = parsed.data;
@@ -133,7 +140,14 @@ export function FileTransfer() {
         if (response.ok) await loadFiles(1);
       } else if (response.status >= 400 && response.status < 500 && response.status !== 408) {
         setTransfers(rows => rows.map(row => row.key === item.key ? { ...row, status: "FAILED", file: undefined } : row));
-        setError(`Request rejected (HTTP ${response.status}).`);
+        const descriptions: Record<string, string> = {
+          STORAGE_QUOTA_EXCEEDED: 'Your storage is full. Delete a file and wait for deletion to finish before uploading again.',
+          INVALID_FILE_CONTENT: 'The file content does not match a supported file type.',
+          CSRF_REJECTED: 'The security check failed. Reload the page and try again.',
+          REQUEST_TOO_LARGE: 'Choose a file no larger than 25 MB.',
+          INVALID_REQUEST: 'Check the filename, file type and 25 MB size limit.',
+        };
+        setError(descriptions[body.error] ?? `Request rejected (HTTP ${response.status}).`);
       } else throw new Error("Result unknown");
     } catch {
       if (!controller.signal.aborted) {
@@ -145,6 +159,8 @@ export function FileTransfer() {
   async function uploadFile(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selectedFile) return;
+    const validation = uploadFileRequestSchema.safeParse(selectedFile);
+    if (!validation.success) { setError(validation.error.issues[0].message); return; }
     const item: Transfer = { key: crypto.randomUUID(), type: "UPLOAD", name: selectedFile.name, file: selectedFile, status: "SENDING" };
     setTransfers(rows => [...rows, item]);
     setUploading(true);
@@ -248,7 +264,10 @@ export function FileTransfer() {
             </span>
             <div>
               <CardTitle>Upload a file</CardTitle>
-              <CardDescription className="mt-1">Files up to 25 MB are supported.</CardDescription>
+              <CardDescription className="mt-1">TXT, CSV, JSON, PDF, PNG and JPEG files up to 25 MB.</CardDescription>
+              {storage && <p className="mt-2 text-sm text-muted-foreground" aria-live="polite">
+                Storage: {formatBytes(storage.usedBytes)} of {formatBytes(storage.limitBytes)} used or reserved.
+              </p>}
             </div>
           </div>
         </CardHeader>
@@ -261,13 +280,14 @@ export function FileTransfer() {
                 ref={inputRef}
                 id="file-upload"
                 type="file"
+                accept={FILE_ACCEPT}
                 onChange={(event) => setSelectedFile(event.currentTarget.files?.[0] ?? null)}
                 aria-describedby="file-upload-description"
               />
               <FieldDescription id="file-upload-description">
                 {selectedFile
                   ? `${selectedFile.name} · ${formatBytes(selectedFile.size)}`
-                  : "Choose any file up to 25 MB."}
+                  : "Choose a supported file up to 25 MB."}
               </FieldDescription>
             </Field>
 
@@ -309,6 +329,20 @@ export function FileTransfer() {
       )}
 
       <section className="mt-10">
+        <form className="mb-5 flex items-end gap-3" onSubmit={event => {
+          event.preventDefault();
+          setLoadingFiles(true);
+          setError(null);
+          if (search === searchInput.trim()) void loadFiles(1);
+          else setSearch(searchInput.trim());
+        }}>
+          <div className="flex-1">
+            <label htmlFor="file-search" className="mb-2 block text-sm font-medium">Search your filenames</label>
+            <Input id="file-search" type="search" value={searchInput} maxLength={100}
+              onChange={event => setSearchInput(event.currentTarget.value)} placeholder="Filename contains…" />
+          </div>
+          <Button type="submit" variant="outline">Search</Button>
+        </form>
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <h2 className="mt-1 text-xl font-semibold">Uploaded files</h2>
@@ -348,7 +382,7 @@ export function FileTransfer() {
           </div>
         ) : uploadedFiles.length === 0 ? (
           <div className="rounded-2xl border bg-white/65 px-5 py-8 text-center text-sm">
-            Your successful uploads will appear here with a download button.
+            {search ? 'No files match your search.' : 'Your successful uploads will appear here with a download button.'}
           </div>
         ) : (
           <ul className="divide-y overflow-hidden rounded-2xl border bg-white">
@@ -364,6 +398,7 @@ export function FileTransfer() {
                 <button
                   type="button"
                   onClick={() => downloadFile(file)}
+                  aria-label={`Download ${file.filename}`}
                   disabled={downloadingId !== null || deletingId !== null || transfers.some(row => row.type === "DELETE" && row.fileId === file.id && !terminal(row.status))}
                   className="inline-flex h-9 shrink-0 items-center gap-2 rounded-lg border px-3 text-sm font-medium transition hover:bg-[#f3f4f6] disabled:cursor-wait disabled:opacity-60"
                 >

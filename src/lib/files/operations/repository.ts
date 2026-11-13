@@ -3,6 +3,7 @@ import type { PrismaClient, Prisma } from '@/generated/prisma/client';
 import type { CreateFileMetadata } from '../repository/base';
 import type { FileOperationConfig } from '../config';
 import { candidateFor, candidatesOf, LeaseLostError, type Operation, type Candidate } from './model';
+import { FilePolicyError } from '../errors';
 
 type Transaction = Prisma.TransactionClient;
 export class OperationRepository {
@@ -24,6 +25,14 @@ export class OperationRepository {
   metadata(operation: Operation) {
     return this.db.fileMetadata.findFirst({ where: { id: operation.fileId, ownedBy: operation.ownerId } });
   }
+  async usage(ownerId: string, db: Pick<PrismaClient, '$queryRaw'> = this.db) {
+    // Failed uploads reserve space until housekeeping confirms removal. Deleting
+    // files keep their reservation until completeDelete removes their metadata.
+    const rows = await db.$queryRaw<{ bytes: bigint }[]>`SELECT COALESCE(SUM(f."fileSizeBytes"), 0)::bigint AS bytes
+      FROM file_metadata f LEFT JOIN file_operation o ON o.id = f."currentOperationId" AND o."ownerId" = f."ownedBy"
+      WHERE f."ownedBy" = ${ownerId} AND (f.status <> 'FAILED' OR o."cleanupStatus" IS DISTINCT FROM 'DONE')`;
+    return { usedBytes: Number(rows[0].bytes), limitBytes: this.config.userQuotaBytes };
+  }
   private transaction<T>(action: (tx: Transaction) => Promise<T>) {
     return this.db.$transaction(action, { maxWait: this.config.databaseTimeoutMs, timeout: this.config.databaseTimeoutMs });
   }
@@ -41,6 +50,10 @@ export class OperationRepository {
     const id = randomUUID(), token = randomUUID();
     const candidate = candidateFor(input.id, token);
     return this.transaction(async tx => {
+      // A per-owner row lock serializes quota reservations from all app processes.
+      await tx.$queryRaw`SELECT id FROM "user" WHERE id = ${input.ownedBy} FOR UPDATE`;
+      const usage = await this.usage(input.ownedBy, tx);
+      if (usage.usedBytes + input.fileSizeBytes > usage.limitBytes) throw new FilePolicyError('STORAGE_QUOTA_EXCEEDED', 409);
       const now = (await tx.$queryRaw<{ now: Date }[]>`SELECT clock_timestamp() AT TIME ZONE 'UTC' AS now`)[0].now;
       const operation = await tx.fileOperation.create({ data: {
         id, ownerId: input.ownedBy, fileId: input.id, type: 'UPLOAD', idempotencyKey, inputFingerprint,

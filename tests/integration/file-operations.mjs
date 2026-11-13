@@ -18,6 +18,7 @@ import { OperationCoordinator } from '../../src/lib/files/operations/coordinator
 import { candidatesOf, publicOperation } from '../../src/lib/files/operations/model.ts';
 import { aesGcmFileEncryptor } from '../../src/lib/files/encryption.ts';
 import { faultProxy } from '../helpers/fault-proxy.mjs';
+import { createCsrfToken, CSRF_COOKIE } from '../../src/lib/security/csrf.ts';
 
 assert.equal(process.env.FILE_OPERATION_TEST_DATABASE, '1', 'Use pnpm test:integration (owns isolated fixtures)');
 const database = new URL(process.env.DATABASE_URL);
@@ -304,7 +305,7 @@ test('AC-19: a real worker process shuts down while idle without losing accepted
   const child = fork('dist/worker/worker.js', [], { execArgv: [], env: { ...process.env, FILE_WORKER_POLL_MS: '100' }, silent: true });
   let output = '';
   await new Promise((resolve, reject) => {
-    child.stdout.on('data', bytes => { output += bytes; if (output.includes('file_worker_started')) resolve(); });
+    child.stdout.on('data', bytes => { output += bytes; if (output.includes('worker.started')) resolve(); });
     child.once('error', reject); child.once('exit', code => reject(new Error(`Worker exited early: ${code}`)));
   });
   child.kill('SIGTERM');
@@ -337,8 +338,10 @@ test('AC-01/09/14/15: actual route handlers enforce session/owner, safe statuses
     const detail = await import('../../src/app/api/files/[fileId]/route.ts');
     const operations = await import('../../src/app/api/file-operations/route.ts');
     const operation = await import('../../src/app/api/file-operations/[operationId]/route.ts');
+    const csrfToken = createCsrfToken();
     const request = (url, owner = 'owner', options = {}) => new NextRequest(`https://localhost${url}`, {
-      ...options, headers: { ...(owner ? { 'x-test-owner': owner } : {}), ...options.headers },
+      ...options, headers: { origin: process.env.BETTER_AUTH_URL, cookie: `${CSRF_COOKIE}=${csrfToken}`, 'X-CSRF-Token': csrfToken,
+        ...(owner ? { 'x-test-owner': owner } : {}), ...options.headers },
     });
     assert.equal((await files.GET(request('/api/files', null))).status, 401);
     assert.equal((await files.POST(request('/api/files', 'owner', { method: 'POST' }))).status, 422);

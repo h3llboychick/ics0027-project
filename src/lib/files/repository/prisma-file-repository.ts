@@ -19,7 +19,7 @@ export const prismaFileRepository: FileRepository = {
     return withMetadataError(async () => await prisma.fileMetadata.findUnique({ where: { id, ownedBy: ownerId, status: 'READY' }, select: { id: true, ownedBy: true, createdAt: true, filename: true, fileSizeBytes: true}}));
   },
 
-  async listByOwner(ownerId: string, page: number, pageSize: number): Promise<FileListings> {
+  async listByOwner(ownerId: string, page: number, pageSize: number, search = ''): Promise<FileListings> {
     return withMetadataError(async () => {
       const files = await prisma.fileMetadata.findMany({
         select: {
@@ -29,7 +29,7 @@ export const prismaFileRepository: FileRepository = {
           id: true,
           fileSizeBytes: true
         },
-        where: { ownedBy: ownerId, status: 'READY' },
+        where: { ownedBy: ownerId, status: 'READY', ...(search ? { filename: { contains: search.replace(/[\\%_]/g, '\\$&'), mode: 'insensitive' } } : {}) },
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         skip: (page - 1) * pageSize,
         take:  pageSize + 1

@@ -49,11 +49,10 @@ export function SignupForm({ ...props }: React.ComponentProps<typeof Card>) {
       })
 
       if (error) {
-        console.error(error);
         const id = toast.add({
           type: "error",
           title: "Error occured",
-          description: `${error.message ?? "Unexpected error"}`,
+          description: "Check your details and try again. If the problem continues, try later.",
           actionProps: { 
             children: "Undo",
             onClick() {
@@ -63,8 +62,7 @@ export function SignupForm({ ...props }: React.ComponentProps<typeof Card>) {
         })
         return;
       }
-    } catch (e) {
-      console.log("unexpected error occured", e);
+    } catch {
       const id = toast.add({
           type: "error",
           title: "Unexpected error",
@@ -105,7 +103,7 @@ export function SignupForm({ ...props }: React.ComponentProps<typeof Card>) {
           <FieldGroup>
             <Field>
               <FieldLabel htmlFor="name">Full Name</FieldLabel>
-              <Input id="name" name="name" type="text" placeholder="John Doe" required />
+              <Input id="name" name="name" type="text" placeholder="John Doe" maxLength={100} required />
             </Field>
             <Field>
               <FieldLabel htmlFor="email">Email</FieldLabel>

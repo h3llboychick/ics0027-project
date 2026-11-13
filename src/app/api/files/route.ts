@@ -1,13 +1,14 @@
 import { requireUser } from "@/lib/auth-guard";
 import { NextRequest, NextResponse } from "next/server";
-import { idempotencyKeySchema, listFilesRequestSchema, uploadFileRequestSchema } from "@/lib/contracts/files";
+import { idempotencyKeySchema, listFilesRequestSchema, uploadFileRequestSchema, MAX_UPLOAD_SIZE } from "@/lib/contracts/files";
 import { FileService } from "@/lib/files/service";
 import { diskStorage } from "@/lib/files/storage/disk-storage";
 import { prismaFileRepository } from "@/lib/files/repository/prisma-file-repository";
-import * as z from 'zod'
 import { apiErrorResponse } from "@/lib/http/api-error-response";
 import { operationRepository } from '@/lib/files/runtime';
 import { securityHandler } from '@/lib/http/security-handler';
+import { boundedBody } from '@/lib/http/bounded-body';
+import { FilePolicyError } from '@/lib/files/errors';
 
 
 async function listFiles(request: NextRequest) {
@@ -22,17 +23,13 @@ async function listFiles(request: NextRequest) {
   try {
     listFilesRequest = listFilesRequestSchema.parse(Object.fromEntries(request.nextUrl.searchParams))
   } catch (err) {
-    if (err instanceof z.ZodError) {
-        return NextResponse.json({ error: "Invalid request" }, { status: 422 })
-    } else {
-        return NextResponse.json({ error: "Internal Server Error" }, { status: 500 })
-    }
+    return apiErrorResponse(err);
   }
   
 
   const fileService = new FileService(prismaFileRepository, diskStorage, operationRepository);
   try {
-    const filesPage = await fileService.listForOwner(session.user.id, listFilesRequest.page, listFilesRequest.pageSize);
+    const filesPage = await fileService.listForOwner(session.user.id, listFilesRequest.page, listFilesRequest.pageSize, listFilesRequest.search);
     return NextResponse.json(filesPage, { status: 200 });
   } catch (error) {
     return apiErrorResponse(error);
@@ -55,8 +52,15 @@ async function uploadFile(request: NextRequest) {
   } catch (error) { return apiErrorResponse(error); }
   let formData: FormData;
   try {
-    formData = await request.formData();
-  } catch {
+    if (!request.headers.get('content-type')?.startsWith('multipart/form-data;')) {
+      return NextResponse.json({ error: 'INVALID_REQUEST' }, { status: 415 });
+    }
+    formData = await boundedBody(request, MAX_UPLOAD_SIZE + 64 * 1024).formData();
+    if ([...formData.keys()].length !== 1 || !formData.has('file')) {
+      return NextResponse.json({ error: 'INVALID_REQUEST' }, { status: 422 });
+    }
+  } catch (error) {
+    if (error instanceof FilePolicyError) return apiErrorResponse(error);
     if (request.signal.aborted) return NextResponse.json({ error: 'REQUEST_CANCELLED' }, { status: 408 });
     return NextResponse.json({ error: 'INVALID_REQUEST' }, { status: 400 });
   }
